@@ -609,31 +609,19 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    if Q.PosQ and ensureUnderwaterPath(Q.PosQ) then return end
-
     -- ═══════════════════════════════════════════════════════════
-    -- BRING MOBS — arm the attractor for the current farm target.
-    -- combat.lua's BringEnemy loop reads getgenv().BringMonster
-    -- and Spirit.BringNames every 0.05s. Setting both here means
-    -- any mob of this name within 350 studs gets pulled under the
-    -- player at the start of the farming tick.
-    --
-    -- Scoped behavior:
-    --   - While LevelFarm owns the dispatcher → pulls Q.Mon
-    --   - When a boss/raid task takes over → CombatController.Attack
-    --     overwrites Spirit.BringNames with its own target, so the
-    --     pull follows the new target automatically
-    --   - When _G.FruitPriorityActive or _G.SkyTransitionActive is
-    --     set → BringEnemy yields, no pull fights the transition
-    --
-    -- Respects Spirit.Config.BringMobs — flip that to false to
-    -- disable the attractor entirely.
+    -- BRING MOBS — pin BringNames to the current tier mob BEFORE
+    -- the UW routing check. Fires on every island every tick.
+    -- getgenv().BringMonster is armed globally in combat.lua at
+    -- boot when Config.BringMobs is true.
     -- ═══════════════════════════════════════════════════════════
     if Spirit.Config and Spirit.Config.BringMobs then
         getgenv().BringMonster = true
         Spirit.BringNames = {Q.Mon}
         Spirit.Mon = Q.Mon
     end
+
+    if Q.PosQ and ensureUnderwaterPath(Q.PosQ) then return end
 
     local now = os.time()
     local targetKey = Q.Qname .. "|" .. tostring(Q.Qdata) .. "|" .. Q.NameMon
