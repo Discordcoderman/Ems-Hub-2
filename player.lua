@@ -1,16 +1,18 @@
--- player.lua — LocalPlayerController + ability flow
---   Level 70  → Buso, Soru, Geppo
---   Ken @ 300 → owned by level_gates.lua, not here
--- Ownership checked 3 ways: player tag, character child, session flag.
+-- player.lua — LocalPlayerController + ability activation.
+--
+-- Buy logic for Buso / Soru / Geppo / Ken lives in level_gates.lua.
+-- This file handles:
+--   - LocalPlayerController methods (EquipTool, ToggleAbilities)
+--   - Auto-aura — keeps Buso active if owned. Never buys.
+--   - Auto-Ken  — keeps Ken active if owned. Never buys.
+--
+-- Ownership reads fall through to the same three checks as
+-- level_gates so no re-evaluation happens twice.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[player] core.lua not loaded") end
 
-local LocalPlayer   = Spirit.LocalPlayer
-local Remotes       = Spirit.Remotes
-local ScriptStorage = Spirit.ScriptStorage
-local SetTask       = Spirit.SetTask
-
-local ABILITY_LEVEL = 70
+local LocalPlayer = Spirit.LocalPlayer
+local Remotes     = Spirit.Remotes
 
 local function playerHasTag(tag)
     local ok, v = pcall(function() return LocalPlayer:HasTag(tag) end)
@@ -30,28 +32,16 @@ local function ownsBuso()
     return false
 end
 
-local function ownsSoru()
-    if Spirit._soruBought then return true end
-    if playerHasTag("Soru") or playerHasTag("FlashStep") then
-        Spirit._soruBought = true; return true
-    end
-    return false
-end
-
-local function ownsGeppo()
-    if Spirit._geppoBought then return true end
-    if playerHasTag("Geppo") or playerHasTag("Skywalk") then
-        Spirit._geppoBought = true; return true
-    end
-    return false
-end
-
 local function ownsKen()
     if Spirit.kenBought then return true end
     if playerHasTag("Ken") then Spirit.kenBought = true; return true end
+    if charHasChild("HasKen") then Spirit.kenBought = true; return true end
     return false
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- LocalPlayerController — methods registry
+-- ═══════════════════════════════════════════════════════════════
 local LPC = Spirit.FunctionsHandler.LocalPlayerController
 
 LPC:RegisterMethod("EquipTool", function(toolName)
@@ -87,38 +77,6 @@ end)
 LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
 
 -- ═══════════════════════════════════════════════════════════════
--- ABILITY PURCHASE — fires once, then stops
--- ═══════════════════════════════════════════════════════════════
-task.spawn(function()
-    repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
-    repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
-    task.wait(3)
-
-    while task.wait(5) do
-        pcall(function()
-            local lv = ScriptStorage.PlayerData.Level or 0
-            if lv < ABILITY_LEVEL then return end
-            if not LocalPlayer.Character then return end
-
-            if not ownsBuso() then
-                Remotes.CommF_:InvokeServer("BuyHaki", "Buso")
-                Spirit._busoBought = true
-            end
-
-            if not ownsSoru() then
-                Remotes.CommF_:InvokeServer("BuyHaki", "Soru")
-                Spirit._soruBought = true
-            end
-
-            if not ownsGeppo() then
-                Remotes.CommF_:InvokeServer("BuyHaki", "Geppo")
-                Spirit._geppoBought = true
-            end
-        end)
-    end
-end)
-
--- ═══════════════════════════════════════════════════════════════
 -- AUTO AURA — keep Buso active only if owned
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
@@ -136,7 +94,7 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO KEN — only after Ken is owned (Ken buy is in level_gates)
+-- AUTO KEN — keep Ken active only if owned
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(2) do
