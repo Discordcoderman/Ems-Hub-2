@@ -1,4 +1,5 @@
 -- gacha.lua — Zioles Gacha boot roll + continuous fruit auto-store
+-- Patched: fruit-storage-full detection + auto-recovery probe.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[gacha] core.lua not loaded") end
 
@@ -9,9 +10,60 @@ local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
 
 -- ═══════════════════════════════════════════════════════════════
+-- FRUIT STORE SAFE — shared helper for anywhere fruit is stored.
+-- Returns true on success. Detects storage-full by N consecutive
+-- failures where the tool is still in the backpack after the
+-- StoreFruit invoke. Sets _G.FruitStorageFull so fruit priority
+-- and the store watcher both skip until recovery.
+-- ═══════════════════════════════════════════════════════════════
+local fruitStoreFailures = 0
+local FRUIT_STORE_FAIL_THRESHOLD = 3
+
+_G.FruitStorageFull = _G.FruitStorageFull or false
+
+function Spirit.StoreFruitSafe(name, tool)
+    if _G.FruitStorageFull then return false end
+
+    local ok = pcall(function()
+        Remotes.CommF_:InvokeServer("StoreFruit", name, tool)
+    end)
+    task.wait(0.4)
+
+    -- Success check: tool gone from backpack / character.
+    local stillHeld = false
+    if tool and tool.Parent then
+        local parentName = tool.Parent.Name
+        if parentName == "Backpack" or parentName ~= "Backpack" then
+            stillHeld = true
+        end
+    end
+
+    if not ok or stillHeld then
+        fruitStoreFailures = fruitStoreFailures + 1
+        if fruitStoreFailures >= FRUIT_STORE_FAIL_THRESHOLD then
+            _G.FruitStorageFull = true
+        end
+        return false
+    end
+
+    fruitStoreFailures = 0
+    return true
+end
+
+-- Recovery probe — every 5 min, clear the flag so the next store
+-- attempt can rebuild the failure count. If storage is still full,
+-- the flag re-trips within 3 attempts.
+task.spawn(function()
+    while task.wait(300) do
+        if _G.FruitStorageFull then
+            _G.FruitStorageFull  = false
+            fruitStoreFailures   = 0
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
 -- FRUIT STORE WATCHER
--- Continuous scan of Backpack + Character for any Tool with a
--- Fruit marker. Skips items in ScriptStorage.IgnoreStoreFruits.
 -- ═══════════════════════════════════════════════════════════════
 local ownFruitCache = {}
 local lastCacheAt   = 0
@@ -55,9 +107,7 @@ local function storeFruitTool(tool)
 
     if isIgnored(tool.Name, original) then return end
 
-    pcall(function()
-        Remotes.CommF_:InvokeServer("StoreFruit", original, tool)
-    end)
+    Spirit.StoreFruitSafe(original, tool)
     ownFruitCache[original] = true
 end
 
@@ -65,7 +115,7 @@ local function scanContainer(container)
     if not container then return end
     for _, child in ipairs(container:GetChildren()) do
         if child:IsA("Tool") then
-            local tip = child.ToolTip
+            local tip       = child.ToolTip
             local nameFruit = string.find(child.Name, "Fruit")
             local origFruit = child:GetAttribute("OriginalName")
             if tip == "Blox Fruit" or nameFruit or origFruit then
@@ -77,16 +127,20 @@ end
 
 task.spawn(function()
     while task.wait(STORE_COOLDOWN) do
-        pcall(function()
-            refreshOwnFruitCache()
-            scanContainer(LocalPlayer:FindFirstChild("Backpack"))
-            scanContainer(LocalPlayer.Character)
-        end)
+        -- Skip whole scan while storage is flagged full. Recovery
+        -- probe clears the flag every 5 min.
+        if not _G.FruitStorageFull then
+            pcall(function()
+                refreshOwnFruitCache()
+                scanContainer(LocalPlayer:FindFirstChild("Backpack"))
+                scanContainer(LocalPlayer.Character)
+            end)
+        end
     end
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- RF DISCOVERY — try known paths, then global scan
+-- RF DISCOVERY
 -- ═══════════════════════════════════════════════════════════════
 local GachaRF
 local gachaResolved = false
@@ -146,6 +200,7 @@ local function gachaCall(ctx)
 end
 
 local function storeSweepNow()
+    if _G.FruitStorageFull then return end
     pcall(function()
         scanContainer(LocalPlayer:FindFirstChild("Backpack"))
         scanContainer(LocalPlayer.Character)
@@ -153,7 +208,7 @@ local function storeSweepNow()
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- BOOT ROLL — fires once when Data exists
+-- BOOT ROLL
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local waited = 0
@@ -190,7 +245,7 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- ONGOING CYCLE — 30 min check, 6 h lock after a success
+-- ONGOING CYCLE — 30 min check, 6 h lock after success
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while not LocalPlayer:FindFirstChild("Data") do task.wait(2) end
