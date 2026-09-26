@@ -1,4 +1,4 @@
--- combat.lua — CombatController, BringEnemy, fast-attack, CheckItem
+-- combat.lua — CombatController, BringEnemy (single-stack), fast-attack, CheckItem
 local Spirit = getgenv().Spirit
 if not Spirit then error("[combat] core.lua not loaded") end
 if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
@@ -353,11 +353,33 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- BRING ENEMY — attract mobs to a spot below the player
+-- BRING ENEMY — single-stack attraction
+-- Every eligible mob in range is teleported to ONE ground point
+-- below the player. No ring spread — the stack sits tight so AOE
+-- melee hits all of them in one swing.
+--
+-- Stack point is found by raycasting straight down from the player
+-- and landing on the ground. Fallback to a fixed 30-stud drop if
+-- the raycast misses (void, water, above-map).
 -- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
 
 local lockedMobs = {}
+
+-- Reusable raycast params — exclude the character and all enemies
+-- so we only hit terrain.
+local stackRayParams = RaycastParams.new()
+stackRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function computeStackPoint(rootPos, char)
+    stackRayParams.FilterDescendantsInstances = {char, Workspace.Enemies}
+    local hit = Workspace:Raycast(rootPos, Vector3.new(0, -500, 0), stackRayParams)
+    if hit then
+        -- Sit the HRP 3 studs above the ground so it doesn't clip.
+        return hit.Position + Vector3.new(0, 3, 0)
+    end
+    return rootPos - Vector3.new(0, 30, 0)
+end
 
 local function saveMobState(v, hrp, hum)
     if lockedMobs[v] then return end
@@ -427,7 +449,9 @@ function Spirit.BringEnemy()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local basePos     = root.Position + Vector3.new(0, -6, 0)
+    -- ONE stack point — raycast to ground once per tick.
+    local stackPos = computeStackPoint(root.Position, char)
+
     local enemyFolder = Workspace:FindFirstChild("Enemies")
     if not enemyFolder then return end
 
@@ -450,11 +474,8 @@ function Spirit.BringEnemy()
         if not hrp or not hum or hum.Health <= 0 then continue end
         if (hrp.Position - root.Position).Magnitude > RANGE then continue end
 
-        local angle  = (pulled * 1.7) % (math.pi * 2)
-        local radius = 2 + (pulled % 3)
-        local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
-
-        attractMob(v, hrp, hum, basePos + offset)
+        -- Every mob to the SAME point. No angle, no radius.
+        attractMob(v, hrp, hum, stackPos)
         pulled = pulled + 1
     end
 
@@ -484,14 +505,7 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- GLOBAL BRING MOBS ARM — every island, every task, every tick.
--- Config.BringMobs true → attractor stays armed for the session.
--- Individual tasks only update Spirit.BringNames / Spirit.Mon via
--- CombatController.Attack (which sets them automatically).
--- LevelFarm additionally pins them to the current tier mob each
--- tick. BringEnemy still yields on _G.FruitPriorityActive and
--- _G.SkyTransitionActive, so a pull never fights a fruit pickup
--- or a sky teleport.
+-- GLOBAL BRING MOBS ARM
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(0.5) do
