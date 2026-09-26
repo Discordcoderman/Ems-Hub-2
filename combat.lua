@@ -109,11 +109,11 @@ end
 
 local CombatController = {
     GRAB = false,
-    GRAB_DISTANCE        = (Spirit.SeaIndex == 1) and 250 or 350,
-    MAX_ATTACK_DURATION  = 2,
+    GRAB_DISTANCE         = (Spirit.SeaIndex == 1) and 250 or 350,
+    MAX_ATTACK_DURATION   = 2,
     MAX_ATTACK_DURATION_2 = 60,
-    LEVITATE_TIME        = 0,
-    CurrentIndex         = 1,
+    LEVITATE_TIME         = 0,
+    CurrentIndex          = 1,
 }
 Spirit.CombatController = CombatController
 
@@ -427,7 +427,7 @@ function Spirit.BringEnemy()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local basePos = root.Position + Vector3.new(0, -6, 0)
+    local basePos     = root.Position + Vector3.new(0, -6, 0)
     local enemyFolder = Workspace:FindFirstChild("Enemies")
     if not enemyFolder then return end
 
@@ -480,6 +480,27 @@ task.spawn(function()
             lockedMobs = {}
         end
         last = cur
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- GLOBAL BRING MOBS ARM — every island, every task, every tick.
+-- Config.BringMobs true → attractor stays armed for the session.
+-- Individual tasks only update Spirit.BringNames / Spirit.Mon via
+-- CombatController.Attack (which sets them automatically).
+-- LevelFarm additionally pins them to the current tier mob each
+-- tick. BringEnemy still yields on _G.FruitPriorityActive and
+-- _G.SkyTransitionActive, so a pull never fights a fruit pickup
+-- or a sky teleport.
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while task.wait(0.5) do
+        local cfg = Spirit.Config
+        if cfg and cfg.BringMobs then
+            getgenv().BringMonster = true
+        else
+            getgenv().BringMonster = false
+        end
     end
 end)
 
