@@ -6,9 +6,9 @@ local BASE = ("https://raw.githubusercontent.com/Discordcoderman/Ems-Hub-2/%s/%%
 local TEAM = "Pirates"
 
 -- Load order is dependency-driven. core → data → tween → combat →
--- quests → tasks → ui → player → mele → bosses → swords → gacha →
--- utility → quest_sea2 → quest_sea3 → level_farm → level_gates →
--- main. Anything reordered will break metatable wiring.
+-- quests → tasks → ui → player → mele → race → bosses → swords →
+-- gacha → utility → quest_sea2 → quest_sea3 → level_farm →
+-- level_gates → main. Reordering breaks metatable wiring.
 local MODULES = {
     "core.lua",
     "data.lua",
@@ -19,6 +19,7 @@ local MODULES = {
     "ui.lua",
     "player.lua",
     "mele.lua",
+    "race.lua",       -- file 21 — EvoRace V2 + RaceAwakening V3
     "bosses.lua",
     "swords.lua",
     "gacha.lua",
@@ -32,7 +33,6 @@ local MODULES = {
 
 local env = getgenv()
 
--- Team select — loop CommF SetTeam until character spawns or timeout.
 task.spawn(function()
     local lplayer = game:GetService("Players").LocalPlayer
     local deadline = os.time() + 90
