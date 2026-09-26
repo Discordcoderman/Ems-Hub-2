@@ -1,5 +1,6 @@
--- utility.lua — Trevor, PirateRaid, CollectDrops (fruit priority),
---               stub tasks
+-- utility.lua — Trevor, PirateRaid, CollectDrops (fruit priority)
+-- Patched: reads _G.FruitStorageFull — skips CollectDrops priority
+-- when storage is flagged full, letting other tasks proceed.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[utility] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
@@ -81,7 +82,9 @@ PR:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS — fruit priority collector
+-- COLLECT DROPS
+-- Storage-full behavior: Refresh returns nil, priority latch stays
+-- off, dispatcher runs the normal task list (farming continues).
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
@@ -212,6 +215,10 @@ local function releasePriority()
 end
 
 CD:RegisterMethod("Refresh", function()
+    -- Storage full — never commit fruit priority. Dispatcher walks
+    -- the normal task list; farming carries on.
+    if _G.FruitStorageFull then return nil end
+
     if priorityTarget then
         if priorityTarget.Parent then return priorityTarget end
         releasePriority()
@@ -238,6 +245,7 @@ end)
 
 CD:RegisterMethod("Start", function(fruit)
     if not fruit or not fruit.Parent then return end
+    if _G.FruitStorageFull then return end
 
     local name = resolveFruitName(fruit)
     if not name then
@@ -264,7 +272,7 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
-    local fp = handle.Position
+    local fp    = handle.Position
     local horiz = horizDist(hrp.Position, fp)
 
     if horiz > ARRIVE_HORIZ then
@@ -274,6 +282,10 @@ CD:RegisterMethod("Start", function(fruit)
         local arriveDeadline = tick() + ARRIVE_TIMEOUT
         local lastRetween    = tick()
         while tick() < arriveDeadline do
+            if _G.FruitStorageFull then
+                releasePriority()
+                return
+            end
             if not fruit.Parent then break end
             local c = LocalPlayer.Character
             local h = c and c:FindFirstChild("HumanoidRootPart")
@@ -289,9 +301,8 @@ CD:RegisterMethod("Start", function(fruit)
 
     if not fruit.Parent then
         local tool = toolInBackpack(name)
-        if tool then
-            pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
-            task.wait(0.5)
+        if tool and Spirit.StoreFruitSafe then
+            Spirit.StoreFruitSafe(name, tool)
         end
         fruitAttempts[name] = nil
         releasePriority()
@@ -313,6 +324,10 @@ CD:RegisterMethod("Start", function(fruit)
     SetTask("MainTask", "Fruit: " .. name .. " — picking up")
     local touchDeadline = tick() + TOUCH_DURATION
     while tick() < touchDeadline do
+        if _G.FruitStorageFull then
+            releasePriority()
+            return
+        end
         if not fruit.Parent then break end
 
         local h2 = findHandle(fruit)
@@ -337,9 +352,8 @@ CD:RegisterMethod("Start", function(fruit)
 
     if not fruit.Parent then
         local tool = toolInBackpack(name)
-        if tool then
-            pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
-            task.wait(0.5)
+        if tool and Spirit.StoreFruitSafe then
+            Spirit.StoreFruitSafe(name, tool)
         end
         fruitAttempts[name] = nil
         releasePriority()
@@ -348,15 +362,18 @@ CD:RegisterMethod("Start", function(fruit)
 
     local tool = toolInBackpack(name)
     if tool then
-        pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
-        task.wait(0.6)
+        if Spirit.StoreFruitSafe then
+            Spirit.StoreFruitSafe(name, tool)
+        end
         fruitAttempts[name] = nil
         releasePriority()
         return
     end
 
-    pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, fruit) end)
-    task.wait(0.8)
+    if Spirit.StoreFruitSafe then
+        Spirit.StoreFruitSafe(name, fruit)
+    end
+    task.wait(0.3)
 
     if not fruit.Parent or ownsFruit(name) then
         fruitAttempts[name] = nil
