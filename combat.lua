@@ -1,4 +1,4 @@
--- combat.lua — CombatController, BringEnemy (single-stack on ground), fast-attack, CheckItem
+-- combat.lua — CombatController, BringEnemy, fast-attack, CheckItem
 local Spirit = getgenv().Spirit
 if not Spirit then error("[combat] core.lua not loaded") end
 if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
@@ -353,43 +353,13 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- BRING ENEMY — single ground stack, no upward drift
---
--- Previous version filtered only {char, Workspace.Enemies}. The
--- raycast from HRP straight down was hitting tween.lua's Rip_Indra
--- block — anchored, transparent, CanCollide=false, but still
--- queryable — which sits at the player's HRP position every frame.
--- Stack point ended up at the player's Y, so mobs tracked the
--- player upward during every hover.
---
--- Fix: add Spirit.block to the raycast filter, and lengthen the
--- ray to 2000 studs so a high hover still reaches real ground.
+-- BRING ENEMY — attract mobs to a ring below the player.
+-- Off by default. Only fires if getgenv().BringMonster is set
+-- true by an external toggle. Not armed by any task automatically.
 -- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
 
 local lockedMobs = {}
-
-local stackRayParams = RaycastParams.new()
-stackRayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local function computeStackPoint(rootPos, char)
-    local filter = {char}
-    local enemiesFolder = Workspace:FindFirstChild("Enemies")
-    if enemiesFolder then table.insert(filter, enemiesFolder) end
-    -- Critical: exclude the tween block. CanCollide=false does NOT
-    -- stop raycasts; only CanQuery=false or a filter exclusion does.
-    if Spirit.block then table.insert(filter, Spirit.block) end
-    stackRayParams.FilterDescendantsInstances = filter
-
-    local hit = Workspace:Raycast(rootPos, Vector3.new(0, -2000, 0), stackRayParams)
-    if hit then
-        -- 3 studs above ground surface — HRP height for a standard rig.
-        return hit.Position + Vector3.new(0, 3, 0)
-    end
-    -- Last-resort fallback: drop 30 below current position. Only
-    -- fires over void or above the map ceiling.
-    return rootPos - Vector3.new(0, 30, 0)
-end
 
 local function saveMobState(v, hrp, hum)
     if lockedMobs[v] then return end
@@ -450,7 +420,6 @@ end
 
 function Spirit.BringEnemy()
     if not getgenv().BringMonster then return end
-    if not (Spirit.Config and Spirit.Config.BringMobs) then return end
     if _G.FruitPriorityActive then return end
     if _G.SkyTransitionActive then return end
 
@@ -459,10 +428,7 @@ function Spirit.BringEnemy()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    -- One ground-level stack point per tick. Raycast reaches real
-    -- terrain even when the player is hovering 35+ studs above.
-    local stackPos = computeStackPoint(root.Position, char)
-
+    local basePos     = root.Position + Vector3.new(0, -6, 0)
     local enemyFolder = Workspace:FindFirstChild("Enemies")
     if not enemyFolder then return end
 
@@ -485,8 +451,11 @@ function Spirit.BringEnemy()
         if not hrp or not hum or hum.Health <= 0 then continue end
         if (hrp.Position - root.Position).Magnitude > RANGE then continue end
 
-        -- Every mob to the exact same ground point.
-        attractMob(v, hrp, hum, stackPos)
+        local angle  = (pulled * 1.7) % (math.pi * 2)
+        local radius = 2 + (pulled % 3)
+        local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+
+        attractMob(v, hrp, hum, basePos + offset)
         pulled = pulled + 1
     end
 
@@ -512,20 +481,6 @@ task.spawn(function()
             lockedMobs = {}
         end
         last = cur
-    end
-end)
-
--- ═══════════════════════════════════════════════════════════════
--- GLOBAL BRING MOBS ARM
--- ═══════════════════════════════════════════════════════════════
-task.spawn(function()
-    while task.wait(0.5) do
-        local cfg = Spirit.Config
-        if cfg and cfg.BringMobs then
-            getgenv().BringMonster = true
-        else
-            getgenv().BringMonster = false
-        end
     end
 end)
 
