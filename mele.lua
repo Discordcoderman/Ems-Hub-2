@@ -1,6 +1,12 @@
--- mele.lua — MeleesController: purchase chain + raid watcher
--- Every buy is gated on the previous melee's 400 mastery.
--- _G.MeleeBuyPending holds gacha until the chain completes.
+-- mele.lua — MeleesController: purchase chain, key farming, raid watcher
+--
+-- Key-gated melees (Death Step → Library Key, Sharkman Karate → Water
+-- Key) drive their own boss-farm loop. Flow:
+--   1. Travel to sea the boss lives in
+--   2. Wait for spawn (60s) or hop
+--   3. Kill boss, check for key
+--   4. Key drops → tween to teacher → buy
+--   5. No drop after 4 kills → hop, retry
 local Spirit = getgenv().Spirit
 if not Spirit then error("[mele] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
@@ -8,8 +14,16 @@ if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
 local ReplicatedStorage = Spirit.Services.ReplicatedStorage
 local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
+local LocalPlayer       = Spirit.LocalPlayer
 local SetTask           = Spirit.SetTask
 local CheckItem         = Spirit.CheckItem
+
+-- Library Key:  Awakened Ice Admiral (Sea 2)
+-- Water Key:    Tide Keeper           (Sea 2)
+local KEY_SOURCES = {
+    ["Library Key"] = {boss = "Awakened Ice Admiral", seaIndex = 2},
+    ["Water Key"]   = {boss = "Tide Keeper",           seaIndex = 2},
+}
 
 local TRAIN_SEQUENCE = {
     {name = "Black Leg",       target = 400},
@@ -81,7 +95,21 @@ local GODHUMAN_MATERIALS = {
 local mele = {currentTrainName = nil, currentTrainIdx = nil, lastMasteryCheck = 0}
 Spirit.MeleeState = mele
 
+local keyFarmState = {
+    sessionStart = 0,
+    retries      = 0,
+}
+
 local function masteryOf(name) return ScriptStorage.Melees[name] or 0 end
+
+local function hasKeyItem(keyName)
+    local bp   = LocalPlayer:FindFirstChild("Backpack")
+    local char = LocalPlayer.Character
+    if bp and bp:FindFirstChild(keyName) then return true end
+    if char and char:FindFirstChild(keyName) then return true end
+    if ScriptStorage.Backpack and ScriptStorage.Backpack[keyName] then return true end
+    return false
+end
 
 local function findTrainingMelee()
     local lastOwned
@@ -107,6 +135,28 @@ end
 local function raidsDoneFor(entry)
     if not entry.needRaids then return 0 end
     return _G.MeleeRaidsDone or 0
+end
+
+local function onlyBlockedByKey(entry)
+    if not entry.needKey then return false end
+    if hasKeyItem(entry.needKey) then return false end
+
+    if entry.needMastery then
+        for _, req in ipairs(entry.needMastery) do
+            if not CheckItem(req[1]) then return false end
+            if masteryOf(req[1]) < req[2] then return false end
+        end
+    end
+    if entry.needFireEssence and not CheckItem("Fire Essence") then return false end
+    if entry.needMaterials then
+        for _, mat in ipairs(GODHUMAN_MATERIALS) do
+            local count = (ScriptStorage.Backpack[mat[1]] and ScriptStorage.Backpack[mat[1]].Count) or 0
+            if count < mat[2] then return false end
+        end
+    end
+    if entry.needRaids and raidsDoneFor(entry) < entry.needRaids then return false end
+
+    return true
 end
 
 local function HasStaticReqs(entry)
@@ -158,6 +208,85 @@ local function GoToTeacher(meleeName)
     return true
 end
 
+local KEY_FARM_WAIT_SPAWN = 60
+local KEY_FARM_MAX_KILLS  = 4
+
+local function farmKeyAndBuy(action)
+    local entry   = action.entry
+    local keyName = action.key
+    local source  = KEY_SOURCES[keyName]
+
+    if not source then
+        SetTask("MainTask", "Auto Melee | No drop source for " .. keyName)
+        return
+    end
+
+    if hasKeyItem(keyName) then
+        if not GoToTeacher(entry.name) then
+            SetTask("MainTask", "Auto Melee | Moving to " .. entry.name .. " teacher")
+            return
+        end
+
+        SetTask("MainTask", "Auto Melee | Buying " .. entry.name)
+        Spirit.BuyMelee(entry.key, true)
+        task.wait(0.3)
+        Spirit.BuyMelee(entry.key)
+        task.wait(0.6)
+        Spirit.RefreshInventory()
+
+        keyFarmState.sessionStart = 0
+        keyFarmState.retries      = 0
+        return
+    end
+
+    if Spirit.SeaIndex < source.seaIndex then
+        if Spirit.SeaIndex == 1 then
+            Remotes.CommF_:InvokeServer("TravelDressrosa")
+        elseif Spirit.SeaIndex == 2 then
+            Remotes.CommF_:InvokeServer("TravelZou")
+        end
+        SetTask("MainTask", "Auto Melee | Sailing to sea " .. source.seaIndex)
+        return
+    end
+
+    if keyFarmState.sessionStart == 0 then
+        keyFarmState.sessionStart = tick()
+    end
+
+    local boss = workspace.Enemies:FindFirstChild(source.boss)
+
+    if not boss then
+        if tick() - keyFarmState.sessionStart > KEY_FARM_WAIT_SPAWN then
+            keyFarmState.sessionStart = tick()
+            keyFarmState.retries      = keyFarmState.retries + 1
+            SetTask("MainTask", "Auto Melee | " .. source.boss .. " not spawned — hopping")
+            Spirit.Hop()
+            return
+        end
+        SetTask("MainTask", "Auto Melee | Waiting for " .. source.boss)
+        return
+    end
+
+    SetTask("MainTask", "Auto Melee | Killing " .. source.boss .. " for " .. keyName)
+    Spirit.CombatController.Attack(source.boss)
+
+    if hasKeyItem(keyName) then
+        SetTask("MainTask", "Auto Melee | " .. keyName .. " dropped")
+        keyFarmState.sessionStart = tick()
+        return
+    end
+
+    keyFarmState.retries = keyFarmState.retries + 1
+    if keyFarmState.retries >= KEY_FARM_MAX_KILLS then
+        keyFarmState.retries      = 0
+        keyFarmState.sessionStart = tick()
+        SetTask("MainTask", "Auto Melee | " .. keyName .. " no drop — hopping")
+        Spirit.Hop()
+    else
+        SetTask("MainTask", "Auto Melee | " .. source.boss .. " attempt " .. keyFarmState.retries)
+    end
+end
+
 local MC = Spirit.FunctionsHandler.MeleesController
 
 MC:RegisterMethod("Refresh", function()
@@ -171,6 +300,12 @@ MC:RegisterMethod("Refresh", function()
         _G.MeleeRaidRequest = false
         _G.MeleeBuyPending  = false
         return nil
+    end
+
+    if onlyBlockedByKey(next_buy) then
+        _G.MeleeRaidRequest = false
+        _G.MeleeBuyPending  = true
+        return {kind = "farm_key", entry = next_buy, key = next_buy.needKey}
     end
 
     if not (HasStaticReqs(next_buy) and HasPrice(next_buy)) then
@@ -193,7 +328,15 @@ MC:RegisterMethod("Refresh", function()
 end)
 
 MC:RegisterMethod("Start", function(action)
-    if not action or action.kind ~= "buy" then return end
+    if not action then return end
+
+    if action.kind == "farm_key" then
+        farmKeyAndBuy(action)
+        return
+    end
+
+    if action.kind ~= "buy" then return end
+
     local entry = action.entry
 
     if not GoToTeacher(entry.name) then
@@ -217,10 +360,6 @@ MC:RegisterMethod("Start", function(action)
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- MASTERY LOOP — every 4 minutes, pick the first owned melee
--- below its target and set _G.SelectWeapon
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
@@ -239,9 +378,6 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- RAID COMPLETION WATCHER
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local inRaid, inRaidSince = false, 0
     while task.wait(2) do
