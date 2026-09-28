@@ -1,4 +1,12 @@
 -- race.lua — EvoRace V2 + RaceAwakening V3 + Wenlocktoad
+--
+-- Gate: BOTH V2 and V3 require SeaIndex == 3 (player has reached Zou)
+-- and Beli >= 2,500,000. Before that, race tasks stay idle.
+--
+--   V2 → travels to Sea 2, gathers Flower 1, Flower 2, kills Swan
+--        Pirates for Flower 3, then returns to Alchemist.
+--   V3 → Wenlocktoad trials on Sea 3 for Human / Rabbit / Fishman.
+--        Races outside that set are skipped silently.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[race] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[race] tasks.lua not loaded") end
@@ -8,26 +16,39 @@ local Remotes       = Spirit.Remotes
 local LocalPlayer   = Spirit.LocalPlayer
 local SetTask       = Spirit.SetTask
 
+local RACE_BELI = 2500000
+
+local function raceUnlocked()
+    -- Player must be in Zou (Sea 3) — that's the unlock marker.
+    return Spirit.SeaIndex == 3
+end
+
+local function raceMoneyReady()
+    return (ScriptStorage.PlayerData.Beli or 0) >= RACE_BELI
+end
+
 -- ═══════════════════════════════════════════════════════════════
 -- RACE V2 (EvoRace)
--- Alchemist chain — Flowers 1, 2, 3 → consume → race V2.
---   Flower 1: touch world object "Flower1" (Fountain City area)
---   Flower 2: touch world object "Flower2"
---   Flower 3: drops from Swan Pirates (Sea 2, level 900+)
 -- ═══════════════════════════════════════════════════════════════
 local EVO = Spirit.FunctionsHandler.EvoRace
 
 EVO:RegisterMethod("Refresh", function()
     if not (Spirit.Config and Spirit.Config.Items and Spirit.Config.Items.RaceV2) then return nil end
-    if Spirit.SeaIndex ~= 2 then return nil end
-    if (ScriptStorage.PlayerData.Level or 0) < 900 then return nil end
-    if (ScriptStorage.PlayerData.Beli or 0) < 1000000 then return nil end
+    if not raceUnlocked() then return nil end
+    if not raceMoneyReady() then return nil end
+    -- Not V2 yet.
     if ScriptStorage.PlayerData.RaceLevel ~= 1 then return nil end
     return true
 end)
 
 EVO:RegisterMethod("Start", function()
-    -- Server-side flag for the Alchemist quest. "1" begins the flow.
+    -- V2 gathers flowers on Sea 2. Travel there first.
+    if Spirit.SeaIndex ~= 2 then
+        SetTask("MainTask", "Auto Race V2 | Sailing to Dressrosa")
+        pcall(function() Remotes.CommF_:InvokeServer("TravelDressrosa") end)
+        return
+    end
+
     Remotes.CommF_:InvokeServer("Alchemist", "1")
     Remotes.CommF_:InvokeServer("Alchemist", "2")
 
@@ -37,8 +58,7 @@ EVO:RegisterMethod("Start", function()
         local world = workspace:FindFirstChild("Flower" .. i)
         if not tool and world and world.Transparency == 0 then
             SetTask("MainTask", "Auto Race V2 | Flower " .. i)
-            local deadline = tick() + 45
-            while not ScriptStorage.Tools["Flower " .. i] and tick() < deadline do
+            while not ScriptStorage.Tools["Flower " .. i] do
                 task.wait()
                 Spirit.TweenController.Create(world.CFrame + Vector3.new(0, math.random(-1, 2), 0))
             end
@@ -61,10 +81,7 @@ end)
 
 -- ═══════════════════════════════════════════════════════════════
 -- RACE AWAKENING (V3)
--- Wenlocktoad chain. Race-specific:
---   Human:  Jeremy → Diamond → Orbitus (3 bosses)
---   Rabbit: 30 chest models in sequence
---   Fishman: Fishman Karate Z on Sea Beasts
+-- Only Human, Rabbit, Fishman are handled. Others skip silently.
 -- ═══════════════════════════════════════════════════════════════
 local RA = Spirit.FunctionsHandler.RaceAwakening
 local state = {humanStage = 0, minkChests = 0}
@@ -81,11 +98,15 @@ RA:RegisterMethod("Refresh", function()
     local data = LocalPlayer:FindFirstChild("Data")
     if not data or not data:FindFirstChild("Race") then return nil end
     if data.Race:FindFirstChild("Evolved") then return nil end
+
     local race = data.Race.Value
     if race ~= "Human" and race ~= "Fishman" and race ~= "Rabbit" then return nil end
-    if (ScriptStorage.PlayerData.Level or 0) < 1400 then return nil end
-    if (ScriptStorage.PlayerData.Beli or 0) < 2000000 then return nil end
-    -- Wenlocktoad check "3" returns -2 when already evolved.
+
+    if not raceUnlocked() then return nil end
+    if not raceMoneyReady() then return nil end
+    -- Must be V2 first.
+    if ScriptStorage.PlayerData.RaceLevel < 2 then return nil end
+
     local ok, wRes = pcall(function() return Remotes.CommF_:InvokeServer("Wenlocktoad", "3") end)
     if ok and wRes == -2 then return nil end
     return true
@@ -97,10 +118,6 @@ RA:RegisterMethod("Start", function()
     local race  = data.Race.Value
     local check = Remotes.CommF_:InvokeServer("Wenlocktoad", "1")
 
-    -- Wenlocktoad state machine:
-    --   0 = not started → "2" begins
-    --   2 = trials complete → "3" finishes
-    --   1 = trials in progress (fall through to race logic)
     if check == 0 then
         Remotes.CommF_:InvokeServer("Wenlocktoad", "2")
         return
@@ -121,6 +138,7 @@ RA:RegisterMethod("Start", function()
         local boss     = ScriptStorage.Enemies[bossName]
         if not boss then
             Spirit.TweenController.Create(HUMAN_WAIT_CF[state.humanStage])
+            SetTask("MainTask", "RaceV3 | Waiting for " .. bossName)
             return
         end
         if boss:FindFirstChild("Humanoid") and boss.Humanoid.Health > 0 then
@@ -136,10 +154,14 @@ RA:RegisterMethod("Start", function()
             return
         end
         local folder = workspace:FindFirstChild("ChestModels")
-        if not folder then return end
+        if not folder then
+            SetTask("MainTask", "RaceV3 | Waiting for chests to spawn")
+            return
+        end
         local chests = folder:GetChildren()
         local chest  = chests[state.minkChests + 1]
         if chest and chest:FindFirstChild("WorldPivot") then
+            SetTask("MainTask", "RaceV3 | Chest " .. (state.minkChests + 1) .. "/30")
             Spirit.TweenController.Create(chest.WorldPivot.Position)
             if Spirit.CaculateDistance(chest.WorldPivot.Position) < 10 then
                 state.minkChests = state.minkChests + 1
@@ -149,8 +171,13 @@ RA:RegisterMethod("Start", function()
     elseif race == "Fishman" then
         SetTask("MainTask", "RaceV3 | Fishman — Sea Beast")
         local beasts = workspace:FindFirstChild("SeaBeasts")
-        if not beasts then Spirit.Hop() return end
+        if not beasts then
+            SetTask("MainTask", "RaceV3 | Waiting for Sea Beast")
+            return
+        end
+
         pcall(function() Remotes.CommF_:InvokeServer("BuyFishmanKarate") end)
+
         for _, b in ipairs(beasts:GetChildren()) do
             local h   = b:FindFirstChild("Health")
             local hrp = b:FindFirstChild("HumanoidRootPart")
@@ -166,9 +193,6 @@ RA:RegisterMethod("Start", function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- Wenlocktoad — stub (Real work is in RaceAwakening above)
--- ═══════════════════════════════════════════════════════════════
 local WT = Spirit.FunctionsHandler.Wenlocktoad
 WT:RegisterMethod("Refresh", function() return nil end)
 WT:RegisterMethod("Start", function() end)
