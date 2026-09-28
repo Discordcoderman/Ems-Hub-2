@@ -1,20 +1,10 @@
 -- quest_sea3.lua — Sea 2 → Sea 3 (Bartilo chain)
 --
--- Server state sources:
---   BartiloQuestProgress("Bartilo") → 0/1/2/3
---     0 = Swan phase (accept quest or kill Swan Pirates)
---     1 = Jeremy phase
---     2 = Flamingo puzzle phase
---     3 = rip_indra + Zou travel phase
---   ZQuestProgress("Check") → 0/1/2
---     0 = need to summon rip_indra True Form
---     1 = rip_indra dead, ready to TravelZou
---     2 = post-Don Swan fallback
+-- BartiloQuestProgress("Bartilo") → 0/1/2/3
+--   0 = Swan phase, 1 = Jeremy, 2 = Flamingo puzzle, 3 = rip_indra + Zou
+-- ZQuestProgress("Check") → 0/1/2
 --
--- Flamingo puzzle: 8 platforms near the Haunted Castle. Stepped in
--- ascending order, then the final pedestal opens the path. Discovery
--- scan locates the platforms by name; the hardcoded CFrame list in
--- Spirit.SEA3.FLAMINGO_PLATFORM_CFS is the fallback when names drift.
+-- Gate: level 850.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[quest_sea3] core.lua not loaded") end
 
@@ -28,19 +18,16 @@ local SetTask       = Spirit.SetTask
 local SEA3 = Spirit.SEA3
 local ZOU_PLACE_IDS = SEA3.ZOU_PLACE_IDS
 
-local STEP_COOLDOWN       = 1.5
-local lastStep            = ""
-local lastStepAt          = 0
-local cachedBartilo       = nil
-local cachedBartiloAt     = 0
-local cachedPlatforms     = nil
-local cachedPlatformsAt   = 0
-local puzzleRestartCount  = 0
-local puzzleLastAttempt   = 0
+local STEP_COOLDOWN     = 1.5
+local lastStep          = ""
+local lastStepAt        = 0
+local cachedBartilo     = nil
+local cachedBartiloAt   = 0
+local cachedPlatforms   = nil
+local cachedPlatformsAt = 0
+local puzzleRestartCount = 0
+local puzzleLastAttempt  = 0
 
--- ═══════════════════════════════════════════════════════════════
--- DISCOVERY
--- ═══════════════════════════════════════════════════════════════
 local function findModelByName(nameList, folders)
     folders = folders or {
         Workspace:FindFirstChild("NPCs"),
@@ -80,9 +67,6 @@ local function getBartilo()
     return cachedBartilo
 end
 
--- Discover Flamingo platforms in the puzzle area. Returns an ordered
--- list {1..8} of {model, position, lit} where lit reflects the current
--- glow state (Material / BrickColor heuristics). Nil if none found.
 local function discoverFlamingoPlatforms()
     if os.time() - cachedPlatformsAt < 15 and cachedPlatforms then
         return cachedPlatforms
@@ -131,9 +115,6 @@ local function discoverFlamingoPlatforms()
     return cachedPlatforms
 end
 
--- ═══════════════════════════════════════════════════════════════
--- HELPERS
--- ═══════════════════════════════════════════════════════════════
 local function distanceTo(cf)
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return math.huge end
@@ -179,12 +160,6 @@ local function questGuiHas(keyword, count)
     return false
 end
 
--- ═══════════════════════════════════════════════════════════════
--- FLAMINGO PUZZLE
--- Step 1..8 in ascending order. Verify arrival at each platform
--- before moving to the next. Timeout per step. If the puzzle resets
--- (server-side fail), restart from platform 1.
--- ═══════════════════════════════════════════════════════════════
 local function solveFlamingoPuzzle()
     SetTask("MainTask", "Auto Sea 3 | Flamingo puzzle")
 
@@ -205,7 +180,6 @@ local function solveFlamingoPuzzle()
         return false
     end
 
-    -- Restart backoff: if we've attempted 3+ times in under 90s, wait.
     if puzzleRestartCount >= 3 and (tick() - puzzleLastAttempt) < 90 then
         return false
     end
@@ -213,7 +187,6 @@ local function solveFlamingoPuzzle()
     for i, pos in ipairs(positions) do
         SetTask("SubTask", "Platform " .. i .. "/8")
 
-        -- Tween to platform, wait for arrival with a hard deadline.
         local arriveDeadline = tick() + 12
         while tick() < arriveDeadline do
             local hrp = Spirit.HumanoidRootPart
@@ -224,7 +197,6 @@ local function solveFlamingoPuzzle()
             task.wait(0.2)
         end
 
-        -- Snap onto the platform and hold for one server tick.
         local hrp = Spirit.HumanoidRootPart
         if hrp then
             hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
@@ -237,9 +209,6 @@ local function solveFlamingoPuzzle()
     return true
 end
 
--- ═══════════════════════════════════════════════════════════════
--- STATE MACHINE
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
@@ -252,7 +221,8 @@ task.spawn(function()
                 return
             end
             if Spirit.SeaIndex ~= 2 then return end
-            if (ScriptStorage.PlayerData.Level or 0) < 1500 then return end
+            -- Level 850 gate.
+            if (ScriptStorage.PlayerData.Level or 0) < 850 then return end
             if ZOU_PLACE_IDS[game.PlaceId] then return end
 
             _G.SeaTransitionActive = true
@@ -268,7 +238,6 @@ task.spawn(function()
             local bartilo   = getBartilo()
             local bartiloCF = cfOf(bartilo) or SEA3.BARTILO_LOCATIONS[2]
 
-            -- ═══ State 0: Swan Pirates ═══
             if b == 0 then
                 local hasSwanQuest = questGuiHas("Swan", "50")
                 if hasSwanQuest then
@@ -276,7 +245,6 @@ task.spawn(function()
                     Spirit.CombatController.Attack("Swan Pirate")
                     return
                 end
-                -- No quest yet — walk to Bartilo to accept.
                 step("bartilo-swan", "Auto Sea 3 | Talk to Bartilo")
                 local d = distanceTo(bartiloCF)
                 if d > 12 then
@@ -291,7 +259,6 @@ task.spawn(function()
                 return
             end
 
-            -- ═══ State 1: Jeremy ═══
             if b == 1 then
                 local jeremy = Workspace.Enemies:FindFirstChild("Jeremy")
                 if jeremy and jeremy:FindFirstChild("Humanoid")
@@ -300,7 +267,6 @@ task.spawn(function()
                     Spirit.CombatController.Attack("Jeremy")
                     return
                 end
-                -- Wait for Jeremy to spawn / walk to Bartilo to confirm.
                 step("bartilo-jeremy", "Auto Sea 3 | Talk to Bartilo")
                 local d = distanceTo(bartiloCF)
                 if d > 12 then
@@ -315,7 +281,6 @@ task.spawn(function()
                 return
             end
 
-            -- ═══ State 2: Flamingo puzzle ═══
             if b == 2 then
                 local solved = solveFlamingoPuzzle()
                 if not solved then
@@ -334,12 +299,10 @@ task.spawn(function()
                 return
             end
 
-            -- ═══ State 3: rip_indra + Zou ═══
             if b == 3 then
                 local z = Remotes.CommF_:InvokeServer("ZQuestProgress", "Check")
 
                 if z == 0 then
-                    -- Summon rip_indra True Form at the altar.
                     local riprip = Workspace.Enemies:FindFirstChild("rip_indra True Form")
                         or Workspace.Enemies:FindFirstChild("rip_indra")
 
@@ -403,7 +366,6 @@ task.spawn(function()
                     return
                 end
 
-                -- z == 2 or higher: post-puzzle fallback path via Don Swan.
                 local don = Workspace.Enemies:FindFirstChild("Don Swan")
                 if don and don:FindFirstChild("Humanoid")
                    and don.Humanoid.Health > 0 then
