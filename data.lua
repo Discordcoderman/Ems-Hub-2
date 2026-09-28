@@ -146,8 +146,11 @@ Spirit.DropItemData = {
 
 Spirit.SeaIndexes = {"Main", "Dressrosa", "Zou"}
 
+-- Tide Keeper and Awakened Ice Admiral excluded — they auto-spawn
+-- frequently and shouldn't be auto-farmed. Killed only via the
+-- key-farming action in mele.lua when their keys are needed.
 Spirit.BossesOrder = {
-    "Awakened Ice Admiral", "Tide Keeper", "Deandre", "Urban", "Diablo", "Soul Reaper"
+    "Deandre", "Urban", "Diablo", "Soul Reaper"
 }
 Spirit.BossesOrderLevel = {
     ["Awakened Ice Admiral"]=700, ["Tide Keeper"]=700, ["Deandre"]=1500,
@@ -188,11 +191,6 @@ Spirit.Portals = ({
     {},
 })[Spirit.SeaIndex] or {}
 
--- ═══════════════════════════════════════════════════════════════
--- SEA 2 QUEST — Ice Admiral chain (Sea 1 → Dressrosa)
--- Static CFrames live here so quest_sea2.lua reads them without
--- re-declaring. Runtime discovery overrides these where it can.
--- ═══════════════════════════════════════════════════════════════
 Spirit.SEA2 = {
     PRISON_ISLAND_CF         = CFrame.new(5207, 20, 738),
     FROZEN_VILLAGE_CF        = CFrame.new(1298, 87, -1344),
@@ -202,16 +200,10 @@ Spirit.SEA2 = {
     CAPTAIN_NAMES            = {"Experienced Captain", "ExperiencedCaptain"},
 }
 
--- ═══════════════════════════════════════════════════════════════
--- SEA 3 QUEST — Bartilo chain (Dressrosa → Zou)
--- Flamingo puzzle: 8 platforms stepped in ascending order, then a
--- final pedestal. Discovery scans for the platform models by name;
--- these CFrames are the fallback when names drift between builds.
--- ═══════════════════════════════════════════════════════════════
 Spirit.SEA3 = {
     BARTILO_LOCATIONS = {
-        [2] = CFrame.new(-456.29, 73.02, 299.90),   -- Colosseum
-        [3] = CFrame.new(-1836, 11, 1714),          -- Haunted Castle entry
+        [2] = CFrame.new(-456.29, 73.02, 299.90),
+        [3] = CFrame.new(-1836, 11, 1714),
     },
     SWAN_PIRATE_CF         = CFrame.new(-456.29, 73.02, 299.90),
     JEREMY_CF              = CFrame.new(2099.88, 448.93, 648.00),
