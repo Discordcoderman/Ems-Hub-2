@@ -1,4 +1,4 @@
--- tasks.lua — FunctionsHandler registry + TasksOrder + dispatcher
+-- tasks.lua — FunctionsHandler registry + TasksOrder + priority dispatcher
 local Spirit = getgenv().Spirit
 if not Spirit then error("[tasks] core.lua not loaded") end
 
@@ -97,25 +97,20 @@ for _, taskName in ipairs(TASKS_TO_REGISTER) do
     FunctionsHandler[taskName]:Register()
 end
 
--- ═══════════════════════════════════════════════════════════════
--- TASK ORDER — Saber first, then melee, then fruit, then bosses,
--- raids, level farm, side quests.
--- ═══════════════════════════════════════════════════════════════
+-- Normal task loop order. Priority tasks (raids, factory core, pirate
+-- raid) are dispatched above this list in RefreshTasksData and are
+-- intentionally NOT in this table.
 Spirit.TasksOrder = {
     "Saber",
     "MeleesController",
     "CollectDrops",
-
     "SpecialBossesTask", "SwordBossTask", "BossesTask",
     "RaidController", "AutoRaidIce",
-
     "LevelFarm",
-
     "Tushita", "Yama", "CursedDualKatana", "SoulGuitar",
     "EvoRace", "RaceAwakening",
-
     "Trevor", "UtillyItemsActivitation",
-    "ColosseumPuzzle", "ThirdSeaPuzzle", "PirateRaid",
+    "ColosseumPuzzle", "ThirdSeaPuzzle",
     "SecondSeaPuzzle",
 }
 
@@ -125,8 +120,9 @@ Spirit.ParsingTimes = ParsingTimes
 local warnedTasks = {}
 Spirit.CurrentTask = nil
 
--- Fruit-priority short-circuit: while a fruit tween is committed,
--- only CollectDrops gets the dispatcher.
+-- ═══════════════════════════════════════════════════════════════
+-- FRUIT PRIORITY (existing) — fruit collection owns the tick
+-- ═══════════════════════════════════════════════════════════════
 local function runFruitPriority()
     if not _G.FruitPriorityActive then return false end
     local cd = FunctionsHandler.CollectDrops
@@ -145,13 +141,87 @@ local function runFruitPriority()
     return false
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- RAID PRIORITY — active raid or melee-forced raid blocks every
+-- other task. Only RaidController runs until the island clears.
+-- ═══════════════════════════════════════════════════════════════
+local function runRaidPriority()
+    local RC = FunctionsHandler.RaidController
+
+    local raidActive = false
+    if RC and RC.Initalized and RC.Methods.GetCurrentRaidIsland then
+        raidActive = RC.Methods.GetCurrentRaidIsland:Call() ~= nil
+    end
+
+    if not (raidActive or _G.MeleeRaidRequest) then return false end
+
+    Spirit.ParsingTimes = Spirit.ParsingTimes + 1
+    Spirit.CurrentTask = "RaidController"
+    if Spirit.EmsUI and Spirit.EmsUI.SetText then
+        Spirit.EmsUI.SetText("DebugLine", "RaidController")
+    end
+
+    if RC and RC.Initalized and RC.Methods.Start then
+        RC.Methods.Start:Call()
+    end
+    return true
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- FACTORY CORE — Sea 3 factory breach. Core boss spawned → tween
+-- and kill before any other task runs.
+-- ═══════════════════════════════════════════════════════════════
+local function runFactoryCore()
+    local enemyFolder = workspace:FindFirstChild("Enemies")
+    if not enemyFolder then return false end
+    local core = enemyFolder:FindFirstChild("Core")
+    if not core then return false end
+    local hum = core:FindFirstChild("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+
+    Spirit.ParsingTimes = Spirit.ParsingTimes + 1
+    Spirit.CurrentTask = "FactoryCore"
+    if Spirit.EmsUI and Spirit.EmsUI.SetText then
+        Spirit.EmsUI.SetText("DebugLine", "FactoryCore")
+    end
+    Spirit.SetTask("MainTask", "Factory Core | Engaging")
+    Spirit.CombatController.Attack("Core")
+    return true
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- PIRATE RAID — notification fired < 500s ago AND within 4500
+-- studs of the raid anchor. Otherwise ignored, farming continues.
+-- ═══════════════════════════════════════════════════════════════
+local function runPirateRaidPriority()
+    local PR = FunctionsHandler.PirateRaid
+    if not PR or not PR.Initalized then return false end
+    if not PR.Methods.Refresh then return false end
+
+    local r = PR.Methods.Refresh:Call(Spirit.ParsingTimes < 100)
+    if not r then return false end
+
+    Spirit.ParsingTimes = Spirit.ParsingTimes + 1
+    Spirit.CurrentTask = "PirateRaid"
+    if Spirit.EmsUI and Spirit.EmsUI.SetText then
+        Spirit.EmsUI.SetText("DebugLine", "PirateRaid")
+    end
+    if PR.Methods.Start then PR.Methods.Start:Call(r) end
+    return true
+end
+
 function Spirit.RefreshTasksData()
     if _G.Stop then return end
     if _G.SeaTransitionActive then return end
     if _G.SkyTransitionActive then return end
 
-    if runFruitPriority() then return end
+    -- Priority ladder — first match consumes the tick.
+    if runFruitPriority()      then return end
+    if runRaidPriority()       then return end
+    if runFactoryCore()        then return end
+    if runPirateRaidPriority() then return end
 
+    -- Normal task loop.
     for _, taskName in ipairs(Spirit.TasksOrder) do
         local handler = FunctionsHandler[taskName]
 
