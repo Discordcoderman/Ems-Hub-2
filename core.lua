@@ -2,8 +2,6 @@
 local Spirit = getgenv().Spirit or {}
 getgenv().Spirit = Spirit
 
--- Transition flags reset on boot. Stale flags from a prior place
--- block every dispatcher tick until cleared.
 _G.SeaTransitionActive  = false
 _G.SkyTransitionActive  = false
 _G.FruitPriorityActive  = false
@@ -256,7 +254,6 @@ end
 Spirit.SetTask = SetTask
 _G.SetTask = SetTask
 
--- Report keeps the traceback for the UI; no stdout pollution.
 local function Report(msg)
     pcall(function()
         table.insert(ScriptStorage.Tracebacks, GetCurrentDateTime() .. " | Report | " .. tostring(msg))
@@ -460,7 +457,6 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 pcall(Spirit.RegisterLocalPlayerEventsConnection)
 
--- Live PlayerData sync — the fix for island transitions staying frozen.
 task.spawn(function()
     while task.wait(0.25) do
         pcall(function()
@@ -521,6 +517,32 @@ function Spirit.BuyMelee(meleeId, checkOnly)
         return type(r) == "number" and r or false
     end
     return Remotes.CommF_:InvokeServer("Buy" .. meleeId)
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- HOP — teleport to a random server of the same PlaceId.
+-- ═══════════════════════════════════════════════════════════════
+function Spirit.Hop()
+    pcall(function()
+        local TS   = game:GetService("TeleportService")
+        local Http = game:GetService("HttpService")
+        local body = game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. game.PlaceId ..
+            "/servers/Public?sortOrder=Asc&limit=100"
+        )
+        local ok, decoded = pcall(function() return Http:JSONDecode(body) end)
+        if ok and decoded and decoded.data then
+            for _, s in ipairs(decoded.data) do
+                if s.playing and s.maxPlayers
+                   and s.playing < s.maxPlayers
+                   and s.id ~= game.JobId then
+                    TS:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
+                    return
+                end
+            end
+        end
+        TS:Teleport(game.PlaceId, LocalPlayer)
+    end)
 end
 
 if Spirit.Character then Spirit.MeleeCheck(Spirit.Character:FindFirstChildOfClass("Tool")) end
