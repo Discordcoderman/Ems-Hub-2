@@ -1,4 +1,4 @@
--- utility.lua — Trevor, PirateRaid, CollectDrops
+-- utility.lua — Trevor, PirateRaid (distance-gated), CollectDrops
 --
 -- Fruit collector semantics:
 --   1. Only "collected" when verified in player's fruit inventory.
@@ -6,6 +6,12 @@
 --   3. When inventory full → flag up, Refresh returns nil, farming
 --      continues. Recovery probe clears the flag every 5 min.
 --   4. When fruit vanished but isn't ours → blacklist 5 min.
+--
+-- PirateRaid semantics:
+--   Notification fires → Refresh returns true only if:
+--     - notification is < 500s old, AND
+--     - pirate raid anchor is within 4500 studs of player
+--   Otherwise Refresh returns nil, farming carries on.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[utility] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
@@ -20,6 +26,9 @@ local CheckItem         = Spirit.CheckItem
 
 _G.FruitPriorityActive = false
 
+-- ═══════════════════════════════════════════════════════════════
+-- TREVOR
+-- ═══════════════════════════════════════════════════════════════
 local Trevor = Spirit.FunctionsHandler.Trevor
 
 Trevor:RegisterMethod("GetFruit", function()
@@ -58,28 +67,44 @@ Trevor:RegisterMethod("Start", function()
     Trevor:Set("IsCompleted", true)
 end)
 
+-- ═══════════════════════════════════════════════════════════════
+-- PIRATE RAID — distance-gated
+-- ═══════════════════════════════════════════════════════════════
 local PR = Spirit.FunctionsHandler.PirateRaid
+
+local PIRATE_RAID_ANCHOR       = Vector3.new(-5543.5327148438, 313.80062866211, -2964.2585449219)
+local PIRATE_RAID_MAX_DISTANCE = 4500
+local PIRATE_RAID_NOTIFY_WINDOW = 500
 
 PR:RegisterMethod("Refresh", function()
     local t = PR:Get("Senque")
-    return t and (os.time() - t < 500)
+    if not t then return nil end
+    if os.time() - t >= PIRATE_RAID_NOTIFY_WINDOW then return nil end
+    -- Distance gate — raid anchor must be within 4500 studs.
+    -- Beyond that, farming continues and the raid is ignored.
+    if Spirit.CaculateDistance(PIRATE_RAID_ANCHOR) > PIRATE_RAID_MAX_DISTANCE then
+        return nil
+    end
+    return true
 end)
 
 PR:RegisterMethod("Start", function()
     local list = Spirit.GetMonAsSortedRange()
-    local anchor = Vector3.new(-5543.5327148438, 313.80062866211, -2964.2585449219)
     if list[1] then
         local hrp = list[1]:FindFirstChild("HumanoidRootPart")
         local hum = list[1]:FindFirstChild("Humanoid")
         if hrp and hum and hum.Health > 0
-           and Spirit.CaculateDistance(hrp.CFrame, anchor) < 500 then
+           and Spirit.CaculateDistance(hrp.CFrame, PIRATE_RAID_ANCHOR) < 500 then
             Spirit.CombatController.Attack(list[1].Name)
             return
         end
     end
-    Spirit.TweenController.Create(anchor)
+    Spirit.TweenController.Create(PIRATE_RAID_ANCHOR)
 end)
 
+-- ═══════════════════════════════════════════════════════════════
+-- COLLECT DROPS
+-- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
 local priorityTarget = nil
@@ -416,6 +441,9 @@ CD:RegisterMethod("Start", function(fruit)
     releasePriority()
 end)
 
+-- ═══════════════════════════════════════════════════════════════
+-- Stubs
+-- ═══════════════════════════════════════════════════════════════
 local SSP = Spirit.FunctionsHandler.SecondSeaPuzzle
 SSP:RegisterMethod("Refresh", function() return nil end)
 SSP:RegisterMethod("Start", function() end)
