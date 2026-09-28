@@ -1,6 +1,11 @@
--- utility.lua — Trevor, PirateRaid, CollectDrops (fruit priority)
--- Patched: reads _G.FruitStorageFull — skips CollectDrops priority
--- when storage is flagged full, letting other tasks proceed.
+-- utility.lua — Trevor, PirateRaid, CollectDrops
+--
+-- Fruit collector semantics:
+--   1. Only "collected" when verified in player's fruit inventory.
+--   2. When collected → release priority, farming resumes.
+--   3. When inventory full → flag up, Refresh returns nil, farming
+--      continues. Recovery probe clears the flag every 5 min.
+--   4. When fruit vanished but isn't ours → blacklist 5 min.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[utility] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
@@ -15,9 +20,6 @@ local CheckItem         = Spirit.CheckItem
 
 _G.FruitPriorityActive = false
 
--- ═══════════════════════════════════════════════════════════════
--- TREVOR
--- ═══════════════════════════════════════════════════════════════
 local Trevor = Spirit.FunctionsHandler.Trevor
 
 Trevor:RegisterMethod("GetFruit", function()
@@ -56,9 +58,6 @@ Trevor:RegisterMethod("Start", function()
     Trevor:Set("IsCompleted", true)
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- PIRATE RAID
--- ═══════════════════════════════════════════════════════════════
 local PR = Spirit.FunctionsHandler.PirateRaid
 
 PR:RegisterMethod("Refresh", function()
@@ -81,16 +80,10 @@ PR:RegisterMethod("Start", function()
     Spirit.TweenController.Create(anchor)
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS
--- Storage-full behavior: Refresh returns nil, priority latch stays
--- off, dispatcher runs the normal task list (farming continues).
--- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
 local priorityTarget = nil
 local priorityName   = nil
-local priorityStart  = 0
 
 local ownedFruitCache = {}
 local blacklist       = {}
@@ -99,12 +92,15 @@ local fruitAttempts   = {}
 local lastCacheRefresh = 0
 local lastScan         = 0
 local cachedFruit      = nil
+local lastCollectAt    = 0
 
-local ARRIVE_HORIZ   = 25
-local ARRIVE_TIMEOUT = 30
-local RETWEEN_EVERY  = 3
-local TOUCH_DURATION = 6
-local BLACKLIST_TIME = 300
+local ARRIVE_HORIZ          = 25
+local ARRIVE_TIMEOUT        = 30
+local RETWEEN_EVERY         = 3
+local TOUCH_DURATION        = 6
+local BLACKLIST_TIME        = 300
+local POST_COLLECT_COOLDOWN = 15
+local VERIFY_WAIT           = 0.6
 
 local function horizDist(a, b)
     local dx = a.X - b.X
@@ -173,9 +169,8 @@ local function refreshOwnedFruits()
     end
 end
 
-local function ownsFruit(name)
+local function ownsFruitFresh(name)
     if not name then return false end
-    if ownedFruitCache[name] then return true end
     local ok, inv = pcall(function()
         return Remotes.CommF_:InvokeServer("getInventoryFruits")
     end)
@@ -208,16 +203,34 @@ end
 local function releasePriority()
     priorityTarget = nil
     priorityName   = nil
-    priorityStart  = 0
     lastScan       = 0
     cachedFruit    = nil
     _G.FruitPriorityActive = false
 end
 
+local function markCollected(name)
+    fruitAttempts[name]   = nil
+    ownedFruitCache[name] = true
+    lastCollectAt         = os.time()
+    releasePriority()
+end
+
+local function attemptStore(name, tool, fruit)
+    if _G.FruitStorageFull then return false end
+
+    if tool and Spirit.StoreFruitSafe then
+        Spirit.StoreFruitSafe(name, tool)
+    elseif fruit and fruit.Parent and Spirit.StoreFruitSafe then
+        Spirit.StoreFruitSafe(name, fruit)
+    end
+
+    task.wait(VERIFY_WAIT)
+    return ownsFruitFresh(name)
+end
+
 CD:RegisterMethod("Refresh", function()
-    -- Storage full — never commit fruit priority. Dispatcher walks
-    -- the normal task list; farming carries on.
     if _G.FruitStorageFull then return nil end
+    if os.time() - lastCollectAt < POST_COLLECT_COOLDOWN then return nil end
 
     if priorityTarget then
         if priorityTarget.Parent then return priorityTarget end
@@ -253,10 +266,14 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
+    if ownsFruitFresh(name) then
+        markCollected(name)
+        return
+    end
+
     if priorityTarget ~= fruit then
         priorityTarget = fruit
         priorityName   = name
-        priorityStart  = tick()
         _G.FruitPriorityActive = true
     end
 
@@ -301,10 +318,11 @@ CD:RegisterMethod("Start", function(fruit)
 
     if not fruit.Parent then
         local tool = toolInBackpack(name)
-        if tool and Spirit.StoreFruitSafe then
-            Spirit.StoreFruitSafe(name, tool)
+        if attemptStore(name, tool, nil) then
+            markCollected(name)
+            return
         end
-        fruitAttempts[name] = nil
+        blacklistFruit(name)
         releasePriority()
         return
     end
@@ -352,46 +370,52 @@ CD:RegisterMethod("Start", function(fruit)
 
     if not fruit.Parent then
         local tool = toolInBackpack(name)
-        if tool and Spirit.StoreFruitSafe then
-            Spirit.StoreFruitSafe(name, tool)
+        if attemptStore(name, tool, nil) then
+            markCollected(name)
+            return
         end
-        fruitAttempts[name] = nil
+        if _G.FruitStorageFull then
+            releasePriority()
+            return
+        end
+        blacklistFruit(name)
         releasePriority()
         return
     end
 
     local tool = toolInBackpack(name)
     if tool then
-        if Spirit.StoreFruitSafe then
-            Spirit.StoreFruitSafe(name, tool)
+        if attemptStore(name, tool, nil) then
+            markCollected(name)
+            return
         end
-        fruitAttempts[name] = nil
+        if _G.FruitStorageFull then
+            releasePriority()
+            return
+        end
+        local attempts = (fruitAttempts[name] or 0) + 1
+        fruitAttempts[name] = attempts
+        if attempts >= 3 then blacklistFruit(name) end
         releasePriority()
         return
     end
 
-    if Spirit.StoreFruitSafe then
-        Spirit.StoreFruitSafe(name, fruit)
+    if attemptStore(name, nil, fruit) then
+        markCollected(name)
+        return
     end
-    task.wait(0.3)
 
-    if not fruit.Parent or ownsFruit(name) then
-        fruitAttempts[name] = nil
+    if _G.FruitStorageFull then
         releasePriority()
         return
     end
 
     local attempts = (fruitAttempts[name] or 0) + 1
     fruitAttempts[name] = attempts
-    if attempts >= 3 then
-        blacklistFruit(name)
-    end
+    if attempts >= 3 then blacklistFruit(name) end
     releasePriority()
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- Stubs
--- ═══════════════════════════════════════════════════════════════
 local SSP = Spirit.FunctionsHandler.SecondSeaPuzzle
 SSP:RegisterMethod("Refresh", function() return nil end)
 SSP:RegisterMethod("Start", function() end)
