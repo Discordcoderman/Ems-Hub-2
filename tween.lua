@@ -1,7 +1,4 @@
--- tween.lua — TweenController with permanent noclip at 180 studs/s
--- BaseParts on the character stay CanCollide = false permanently.
--- Toggling collision back on when idle blocked the Saber Expert
--- doorway; permanent noclip is the fix.
+-- tween.lua — TweenController with permanent noclip at 200 studs/s
 local Spirit = getgenv().Spirit
 if not Spirit then error("[tween] core.lua not loaded") end
 
@@ -51,8 +48,6 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     clearCollision(char)
 end)
 
--- Water surfaces lose collision — prevents mid-ocean stalls on long
--- cross-map tweens.
 task.spawn(function()
     while task.wait(5) do
         pcall(function()
@@ -71,7 +66,6 @@ task.spawn(function()
     end
 end)
 
--- Character follows the block during a tween.
 task.spawn(function()
     local lp = LocalPlayer
     repeat task.wait() until lp.Character and lp.Character.PrimaryPart
@@ -209,7 +203,6 @@ function TweenController.Create(target)
         end
     end
 
-    -- Submerged Island routing — gate + remote call.
     if Spirit.SeaIndex == 3
        and Spirit.CaculateDistance(Vector3.new(11256, -2138, 9888), destCF)
            < (Spirit.CaculateDistance(destCF) - 700) then
@@ -232,7 +225,7 @@ function TweenController.Create(target)
         return
     end
 
-    local duration = dist / 180
+    local duration = dist / 200
 
     Spirit.shouldTween      = true
     Spirit.TweenDestination = destCF
