@@ -609,18 +609,6 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- ═══════════════════════════════════════════════════════════
-    -- BRING MOBS — pin BringNames to the current tier mob BEFORE
-    -- the UW routing check. Fires on every island every tick.
-    -- getgenv().BringMonster is armed globally in combat.lua at
-    -- boot when Config.BringMobs is true.
-    -- ═══════════════════════════════════════════════════════════
-    if Spirit.Config and Spirit.Config.BringMobs then
-        getgenv().BringMonster = true
-        Spirit.BringNames = {Q.Mon}
-        Spirit.Mon = Q.Mon
-    end
-
     if Q.PosQ and ensureUnderwaterPath(Q.PosQ) then return end
 
     local now = os.time()
