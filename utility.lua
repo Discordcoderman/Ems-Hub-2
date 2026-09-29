@@ -1,17 +1,4 @@
 -- utility.lua — Trevor, PirateRaid (distance-gated), CollectDrops
---
--- Fruit collector semantics:
---   1. Only "collected" when verified in player's fruit inventory.
---   2. When collected → release priority, farming resumes.
---   3. When inventory full → flag up, Refresh returns nil, farming
---      continues. Recovery probe clears the flag every 5 min.
---   4. When fruit vanished but isn't ours → blacklist 5 min.
---
--- PirateRaid semantics:
---   Notification fires → Refresh returns true only if:
---     - notification is < 500s old, AND
---     - pirate raid anchor is within 4500 studs of player
---   Otherwise Refresh returns nil, farming carries on.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[utility] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
@@ -80,8 +67,6 @@ PR:RegisterMethod("Refresh", function()
     local t = PR:Get("Senque")
     if not t then return nil end
     if os.time() - t >= PIRATE_RAID_NOTIFY_WINDOW then return nil end
-    -- Distance gate — raid anchor must be within 4500 studs.
-    -- Beyond that, farming continues and the raid is ignored.
     if Spirit.CaculateDistance(PIRATE_RAID_ANCHOR) > PIRATE_RAID_MAX_DISTANCE then
         return nil
     end
@@ -104,6 +89,10 @@ end)
 
 -- ═══════════════════════════════════════════════════════════════
 -- COLLECT DROPS
+-- Two modes controlled by Config.Extras.CollectMode:
+--   "walk"     — tween to fruit, touch-interest pickup (default)
+--   "teleport" — pull every world fruit to the player, then store
+-- When FruitStorageFull, both modes skip — farming continues.
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
@@ -252,6 +241,35 @@ local function attemptStore(name, tool, fruit)
     task.wait(VERIFY_WAIT)
     return ownsFruitFresh(name)
 end
+
+-- ═══════════════════════════════════════════════════════════════
+-- TELEPORT MODE
+-- Snap every visible world fruit to the player's HRP, then let the
+-- normal Refresh → Start pass collect them. Runs while
+-- Config.Extras.CollectMode == "teleport".
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while task.wait(2) do
+        pcall(function()
+            local E = Spirit.Config and Spirit.Config.Extras
+            if not E or E.CollectMode ~= "teleport" then return end
+            if _G.FruitStorageFull then return end
+
+            local char = LocalPlayer.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj:IsA("Model") and string.find(obj.Name, "Fruit") then
+                    local handle = obj:FindFirstChild("Handle")
+                    if handle and handle:IsA("BasePart") then
+                        pcall(function() handle.CFrame = hrp.CFrame end)
+                    end
+                end
+            end
+        end)
+    end
+end)
 
 CD:RegisterMethod("Refresh", function()
     if _G.FruitStorageFull then return nil end
