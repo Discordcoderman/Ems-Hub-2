@@ -1,10 +1,4 @@
 -- quest_sea3.lua — Sea 2 → Sea 3 (Bartilo chain)
---
--- BartiloQuestProgress("Bartilo") → 0/1/2/3
---   0 = Swan phase, 1 = Jeremy, 2 = Flamingo puzzle, 3 = rip_indra + Zou
--- ZQuestProgress("Check") → 0/1/2
---
--- Gate: level 850.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[quest_sea3] core.lua not loaded") end
 
@@ -67,52 +61,73 @@ local function getBartilo()
     return cachedBartilo
 end
 
+-- Try discovery against workspace.Map.Dressrosa.BartiloPlates first —
+-- that's the live instance. Fall back to scanning for models near the
+-- puzzle area. Fall back again to the hardcoded CFrame list in data.lua.
 local function discoverFlamingoPlatforms()
     if os.time() - cachedPlatformsAt < 15 and cachedPlatforms then
         return cachedPlatforms
     end
-    local map = Workspace:FindFirstChild("Map")
-    if not map then return nil end
 
-    local puzzleCenter = SEA3.FLAMINGO_PUZZLE_CF.Position
-    local found = {}
-    local byIndex = {}
-
-    for _, obj in ipairs(map:GetDescendants()) do
-        if obj:IsA("BasePart") then
-            local d = (obj.Position - puzzleCenter).Magnitude
-            if d < 120 then
-                local lower = string.lower(obj.Name)
-                if string.find(lower, "flamingo", 1, true)
-                   or string.find(lower, "platform", 1, true)
-                   or string.find(lower, "puzzle", 1, true) then
-                    local num = tonumber(obj.Name:match("(%d+)"))
-                    if num and num >= 1 and num <= 8 then
-                        local isLit = false
-                        pcall(function()
-                            if obj.Material == Enum.Material.Neon
-                               or obj.Material == Enum.Material.Glass then
-                                isLit = true
-                            end
-                            if obj.BrickColor
-                               and obj.BrickColor.Name:lower():find("neon") then
-                                isLit = true
-                            end
-                        end)
-                        byIndex[num] = {part = obj, position = obj.Position, lit = isLit}
-                    end
+    -- Path A: workspace.Map.Dressrosa.BartiloPlates (the correct name).
+    do
+        local map = Workspace:FindFirstChild("Map")
+        local dressrosa = map and map:FindFirstChild("Dressrosa")
+        local plates = dressrosa and dressrosa:FindFirstChild("BartiloPlates")
+        if plates then
+            local found = {}
+            for i = 1, 8 do
+                local plate = plates:FindFirstChild("Plate" .. i)
+                if plate then
+                    table.insert(found, {part = plate, position = plate.Position})
                 end
+            end
+            if #found >= 8 then
+                cachedPlatforms   = found
+                cachedPlatformsAt = os.time()
+                return found
             end
         end
     end
 
-    for i = 1, 8 do
-        if byIndex[i] then table.insert(found, byIndex[i]) end
+    -- Path B: discovery by name within 120 studs of the puzzle CF.
+    do
+        local map = Workspace:FindFirstChild("Map")
+        if map then
+            local puzzleCenter = SEA3.FLAMINGO_PUZZLE_CF.Position
+            local byIndex = {}
+            for _, obj in ipairs(map:GetDescendants()) do
+                if obj:IsA("BasePart") then
+                    local d = (obj.Position - puzzleCenter).Magnitude
+                    if d < 120 then
+                        local lower = string.lower(obj.Name)
+                        if string.find(lower, "flamingo", 1, true)
+                           or string.find(lower, "platform", 1, true)
+                           or string.find(lower, "plate", 1, true)
+                           or string.find(lower, "puzzle", 1, true) then
+                            local num = tonumber(obj.Name:match("(%d+)"))
+                            if num and num >= 1 and num <= 8 then
+                                byIndex[num] = {part = obj, position = obj.Position}
+                            end
+                        end
+                    end
+                end
+            end
+            local found = {}
+            for i = 1, 8 do
+                if byIndex[i] then table.insert(found, byIndex[i]) end
+            end
+            if #found >= 8 then
+                cachedPlatforms   = found
+                cachedPlatformsAt = os.time()
+                return found
+            end
+        end
     end
 
-    cachedPlatforms   = (#found > 0) and found or nil
+    cachedPlatforms   = nil
     cachedPlatformsAt = os.time()
-    return cachedPlatforms
+    return nil
 end
 
 local function distanceTo(cf)
@@ -160,6 +175,12 @@ local function questGuiHas(keyword, count)
     return false
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- FLAMINGO PUZZLE
+-- Try live instance first. If not found, fall back to the hardcoded
+-- plate CFrames from data.lua. Each step: tween to plate, wait for
+-- arrival, snap HRP, hold. Restart backoff on 3+ fails in 90s.
+-- ═══════════════════════════════════════════════════════════════
 local function solveFlamingoPuzzle()
     SetTask("MainTask", "Auto Sea 3 | Flamingo puzzle")
 
@@ -170,13 +191,13 @@ local function solveFlamingoPuzzle()
             positions[i] = platforms[i].position
         end
     else
-        for i, cf in ipairs(SEA3.FLAMINGO_PLATFORM_CFS) do
+        for i, cf in ipairs(SEA3.BARTILO_PLATES) do
             positions[i] = cf.Position
         end
     end
 
     if #positions == 0 then
-        Spirit.Report("[Sea3] Flamingo puzzle — no platforms discovered")
+        Spirit.Report("[Sea3] Flamingo puzzle — no plates")
         return false
     end
 
@@ -185,7 +206,7 @@ local function solveFlamingoPuzzle()
     end
 
     for i, pos in ipairs(positions) do
-        SetTask("SubTask", "Platform " .. i .. "/8")
+        SetTask("SubTask", "Plate " .. i .. "/8")
 
         local arriveDeadline = tick() + 12
         while tick() < arriveDeadline do
@@ -221,7 +242,6 @@ task.spawn(function()
                 return
             end
             if Spirit.SeaIndex ~= 2 then return end
-            -- Level 850 gate.
             if (ScriptStorage.PlayerData.Level or 0) < 850 then return end
             if ZOU_PLACE_IDS[game.PlaceId] then return end
 
