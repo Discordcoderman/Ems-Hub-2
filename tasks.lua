@@ -92,18 +92,28 @@ local TASKS_TO_REGISTER = {
     "RaidController","AutoRaidIce","MeleesController","Superhuman","DeathStep",
     "SharkmanKarate","ElectricClaw","DragonTalon","Godhuman","BossesTask",
     "SpecialBossesTask","CollectDrops","CollectBerries","UtillyItemsActivitation",
+    -- farming.lua tasks
+    "AutoEliteHunterTask", "AutoDoughKingTask", "AutoMaterialTask",
+    "KillAuraTask", "AutoChestTask", "SwordMastery600Task", "AutoBossTask",
 }
 for _, taskName in ipairs(TASKS_TO_REGISTER) do
     FunctionsHandler[taskName]:Register()
 end
 
--- Normal task loop order. Priority tasks (raids, factory core, pirate
--- raid) are dispatched above this list in RefreshTasksData and are
--- intentionally NOT in this table.
+-- Farming tasks live above LevelFarm so they preempt normal level farm
+-- when their config flag is on. Config default is false, so on a fresh
+-- boot the dispatcher still goes straight to LevelFarm.
 Spirit.TasksOrder = {
     "Saber",
     "MeleesController",
     "CollectDrops",
+    "AutoEliteHunterTask",
+    "AutoDoughKingTask",
+    "AutoMaterialTask",
+    "SwordMastery600Task",
+    "AutoBossTask",
+    "KillAuraTask",
+    "AutoChestTask",
     "SpecialBossesTask", "SwordBossTask", "BossesTask",
     "RaidController", "AutoRaidIce",
     "LevelFarm",
@@ -120,9 +130,6 @@ Spirit.ParsingTimes = ParsingTimes
 local warnedTasks = {}
 Spirit.CurrentTask = nil
 
--- ═══════════════════════════════════════════════════════════════
--- FRUIT PRIORITY (existing) — fruit collection owns the tick
--- ═══════════════════════════════════════════════════════════════
 local function runFruitPriority()
     if not _G.FruitPriorityActive then return false end
     local cd = FunctionsHandler.CollectDrops
@@ -141,10 +148,6 @@ local function runFruitPriority()
     return false
 end
 
--- ═══════════════════════════════════════════════════════════════
--- RAID PRIORITY — active raid or melee-forced raid blocks every
--- other task. Only RaidController runs until the island clears.
--- ═══════════════════════════════════════════════════════════════
 local function runRaidPriority()
     local RC = FunctionsHandler.RaidController
 
@@ -167,10 +170,6 @@ local function runRaidPriority()
     return true
 end
 
--- ═══════════════════════════════════════════════════════════════
--- FACTORY CORE — Sea 3 factory breach. Core boss spawned → tween
--- and kill before any other task runs.
--- ═══════════════════════════════════════════════════════════════
 local function runFactoryCore()
     local enemyFolder = workspace:FindFirstChild("Enemies")
     if not enemyFolder then return false end
@@ -189,10 +188,6 @@ local function runFactoryCore()
     return true
 end
 
--- ═══════════════════════════════════════════════════════════════
--- PIRATE RAID — notification fired < 500s ago AND within 4500
--- studs of the raid anchor. Otherwise ignored, farming continues.
--- ═══════════════════════════════════════════════════════════════
 local function runPirateRaidPriority()
     local PR = FunctionsHandler.PirateRaid
     if not PR or not PR.Initalized then return false end
@@ -215,13 +210,11 @@ function Spirit.RefreshTasksData()
     if _G.SeaTransitionActive then return end
     if _G.SkyTransitionActive then return end
 
-    -- Priority ladder — first match consumes the tick.
     if runFruitPriority()      then return end
     if runRaidPriority()       then return end
     if runFactoryCore()        then return end
     if runPirateRaidPriority() then return end
 
-    -- Normal task loop.
     for _, taskName in ipairs(Spirit.TasksOrder) do
         local handler = FunctionsHandler[taskName]
 
