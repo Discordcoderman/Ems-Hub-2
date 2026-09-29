@@ -1,4 +1,4 @@
--- combat.lua — CombatController, BringEnemy, fast-attack, CheckItem
+-- combat.lua — CombatController, BringEnemy (single-stack), fast-attack
 local Spirit = getgenv().Spirit
 if not Spirit then error("[combat] core.lua not loaded") end
 if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
@@ -9,6 +9,7 @@ local ReplicatedStorage = Services.ReplicatedStorage
 local LocalPlayer       = Spirit.LocalPlayer
 local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
+local Players           = Services.Players
 
 local function CheckItem(itemName)
     if not itemName then return false end
@@ -31,6 +32,38 @@ local function CheckItem(itemName)
     return false
 end
 Spirit.CheckItem = CheckItem
+
+-- ═══════════════════════════════════════════════════════════════
+-- NETWORK OWNERSHIP
+-- Only the client that owns a mob's physics can teleport it.
+-- `isnetworkowner` is native on good executors. Fallback reads
+-- SimulationRadius + ReceiveAge + nearby-player check.
+-- ═══════════════════════════════════════════════════════════════
+if not isnetworkowner then
+    local function anyPlayerNear(pos)
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character then
+                local rp = p.Character:FindFirstChild("HumanoidRootPart")
+                if rp and (rp.Position - pos).Magnitude <= 1000 then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    isnetworkowner = function(part)
+        if not part or not part.Parent then return false end
+        if part.Anchored then return false end
+        local radius = math.huge
+        pcall(function() radius = gethiddenproperty(LocalPlayer, "SimulationRadius") end)
+        local hrp = Spirit.HumanoidRootPart
+        if hrp and (hrp.Position - part.Position).Magnitude <= radius then
+            return true
+        end
+        return part.ReceiveAge == 0 and anyPlayerNear(part.Position)
+    end
+end
 
 local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
 local RE_RegisterAttack = Net:WaitForChild("RE/RegisterAttack")
@@ -353,24 +386,39 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- BRING ENEMY — attract mobs to a ring below the player.
--- Off by default. Only fires if getgenv().BringMonster is set
--- true by an external toggle. Not armed by any task automatically.
+-- BRING ENEMY — attract owned mobs to one ground point.
+-- Non-owned mobs skipped (server would revert CFrame writes).
+-- Toggle via getgenv().BringMonster. Scope via Spirit.BringNames.
 -- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
 
 local lockedMobs = {}
 
+local stackRayParams = RaycastParams.new()
+stackRayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function computeStackPoint(rootPos, char)
+    local filter = {char}
+    local enemiesFolder = Workspace:FindFirstChild("Enemies")
+    if enemiesFolder then table.insert(filter, enemiesFolder) end
+    if Spirit.block then table.insert(filter, Spirit.block) end
+    stackRayParams.FilterDescendantsInstances = filter
+
+    local hit = Workspace:Raycast(rootPos, Vector3.new(0, -2000, 0), stackRayParams)
+    if hit then return hit.Position + Vector3.new(0, 3, 0) end
+    return rootPos - Vector3.new(0, 30, 0)
+end
+
 local function saveMobState(v, hrp, hum)
     if lockedMobs[v] then return end
     local ok, owner = pcall(function() return v:GetNetworkOwner() end)
     lockedMobs[v] = {
-        canCollide = hrp.CanCollide,
-        anchored   = hrp.Anchored,
-        walkSpeed  = hum.WalkSpeed,
-        jumpPower  = hum.JumpPower,
-        autoRotate = hum.AutoRotate,
-        netOwner   = ok and owner or nil,
+        canCollide  = hrp.CanCollide,
+        anchored    = hrp.Anchored,
+        walkSpeed   = hum.WalkSpeed,
+        jumpPower   = hum.JumpPower,
+        autoRotate  = hum.AutoRotate,
+        netOwner    = ok and owner or nil,
     }
 end
 
@@ -379,19 +427,33 @@ local function attractMob(v, hrp, hum, targetPos)
     if hum.Health <= 0 then return end
     saveMobState(v, hrp, hum)
     pcall(function() setnetworkowner(v, LocalPlayer) end)
-    pcall(function()
-        hrp.Anchored    = false
-        hrp.CanCollide  = false
-        hrp.Velocity    = Vector3.zero
-        hrp.RotVelocity = Vector3.zero
-    end)
+
+    for _, part in ipairs(v:GetDescendants()) do
+        if part:IsA("BasePart") and part.CanCollide then
+            part.CanCollide = false
+        end
+    end
+
+    local lock = hrp:FindFirstChild("BroughtLock")
+    if not lock then
+        lock = Instance.new("BodyVelocity")
+        lock.Name     = "BroughtLock"
+        lock.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        lock.Velocity = Vector3.zero
+        lock.P         = 15000
+        lock.Parent    = hrp
+    else
+        lock.Velocity = Vector3.zero
+    end
+
     pcall(function()
         hum.WalkSpeed  = 0
         hum.JumpPower  = 0
         hum.AutoRotate = false
-        hum:ChangeState(Enum.HumanoidStateType.Physics)
     end)
+
     hrp.CFrame = CFrame.new(targetPos)
+    pcall(function() v:SetPrimaryPartCFrame(CFrame.new(targetPos)) end)
 end
 
 local function releaseMob(v)
@@ -401,6 +463,8 @@ local function releaseMob(v)
         local hrp = v:FindFirstChild("HumanoidRootPart")
         local hum = v:FindFirstChild("Humanoid")
         if hrp then
+            local lock = hrp:FindFirstChild("BroughtLock")
+            if lock then lock:Destroy() end
             pcall(function()
                 hrp.CanCollide = saved.canCollide
                 hrp.Anchored   = saved.anchored
@@ -428,7 +492,12 @@ function Spirit.BringEnemy()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    local basePos     = root.Position + Vector3.new(0, -6, 0)
+    pcall(function()
+        sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+    end)
+
+    local stackPos = computeStackPoint(root.Position, char)
+
     local enemyFolder = Workspace:FindFirstChild("Enemies")
     if not enemyFolder then return end
 
@@ -450,12 +519,9 @@ function Spirit.BringEnemy()
         local hum = v:FindFirstChild("Humanoid")
         if not hrp or not hum or hum.Health <= 0 then continue end
         if (hrp.Position - root.Position).Magnitude > RANGE then continue end
+        if not isnetworkowner(hrp) then continue end
 
-        local angle  = (pulled * 1.7) % (math.pi * 2)
-        local radius = 2 + (pulled % 3)
-        local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
-
-        attractMob(v, hrp, hum, basePos + offset)
+        attractMob(v, hrp, hum, stackPos)
         pulled = pulled + 1
     end
 
