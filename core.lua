@@ -277,6 +277,14 @@ end
 
 Spirit._AddPointState = {lastLevel = 0, lastCall = 0}
 
+-- ═══════════════════════════════════════════════════════════════
+-- STAT DISTRIBUTION — 2 melee : 1 defense per level (3 pts/level).
+-- Splits the available pool 2:1 in a single flush. Sword / gun /
+-- fruit allocation is intentionally not used.
+--   1 point  → all melee
+--   2 points → 1 melee + 1 defense
+--   3+       → floor(N * 2/3) melee, remainder defense
+-- ═══════════════════════════════════════════════════════════════
 function Spirit.AddPoint()
     local data = LocalPlayer:FindFirstChild("Data")
     if not data then return end
@@ -284,31 +292,34 @@ function Spirit.AddPoint()
     if not pts then return end
     local points = tonumber(pts.Value) or 0
     if points <= 0 then return end
+
     local lvl = (data:FindFirstChild("Level") and tonumber(data.Level.Value)) or 0
     local state = Spirit._AddPointState
-    if lvl == state.lastLevel and (os.time() - state.lastCall) < 5 then return end
+    if lvl == state.lastLevel and (os.time() - state.lastCall) < 2 then return end
     state.lastLevel = lvl
     state.lastCall  = os.time()
 
-    local stats = {}
-    pcall(function()
-        for _, s in ipairs(data.Stats:GetChildren()) do
-            if s and s:FindFirstChild("Level") then stats[s.Name] = s.Level.Value end
-        end
-    end)
-
-    local point
-    if (stats.Defense or 0) < MaxLevel
-       and ((stats.Defense or 0) < ((ScriptStorage.PlayerData.Level or 0) / 80)
-            or MaxLevel - (stats.Melee or 0) < 100) then
-        point = "Defense"
-    elseif (stats.Melee or 0) < MaxLevel then
-        point = "Melee"
+    local meleeAmount, defenseAmount
+    if points == 1 then
+        meleeAmount, defenseAmount = 1, 0
+    elseif points == 2 then
+        meleeAmount, defenseAmount = 1, 1
     else
-        point = "Sword"
+        meleeAmount   = math.floor(points * 2 / 3)
+        defenseAmount = points - meleeAmount
     end
 
-    pcall(function() Remotes.CommF_:InvokeServer("AddPoint", point, points) end)
+    if meleeAmount > 0 then
+        pcall(function()
+            Remotes.CommF_:InvokeServer("AddPoint", "Melee", meleeAmount)
+        end)
+        task.wait(0.15)
+    end
+    if defenseAmount > 0 then
+        pcall(function()
+            Remotes.CommF_:InvokeServer("AddPoint", "Defense", defenseAmount)
+        end)
+    end
 end
 
 function Spirit.RefreshRace()
@@ -519,9 +530,6 @@ function Spirit.BuyMelee(meleeId, checkOnly)
     return Remotes.CommF_:InvokeServer("Buy" .. meleeId)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- HOP — teleport to a random server of the same PlaceId.
--- ═══════════════════════════════════════════════════════════════
 function Spirit.Hop()
     pcall(function()
         local TS   = game:GetService("TeleportService")
