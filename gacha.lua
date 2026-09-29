@@ -1,5 +1,6 @@
 -- gacha.lua — Zioles Gacha boot roll + continuous fruit auto-store
 -- Patched: fruit-storage-full detection + auto-recovery probe.
+-- Patched: 5-minute readiness re-check when the roll isn't ready yet.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[gacha] core.lua not loaded") end
 
@@ -245,14 +246,27 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- ONGOING CYCLE — 30 min check, 6 h lock after success
+-- ONGOING CYCLE — 5 min readiness poll.
+--
+-- Every 5 minutes, ask the server whether the player can roll.
+-- If yes, roll. If no, wait 5 more minutes.
+-- Successful rolls lock for 6 hours — no point re-checking while
+-- the cooldown is active.
 -- ═══════════════════════════════════════════════════════════════
+local READY_CHECK_INTERVAL = 5 * 60      -- 5 minutes between "can roll?" pings
+local SUCCESS_LOCK         = 6 * 60 * 60 -- 6 hours after a successful roll
+local BELI_RETRY           = 2 * 60      -- if broke, retry in 2 min
+local RF_FAIL_RETRY        = 5 * 60      -- if the RF call fails, retry in 5 min
+local PURCHASE_FAIL_RETRY  = 10 * 60     -- if the roll was refused, retry in 10 min
+
 task.spawn(function()
     while not LocalPlayer:FindFirstChild("Data") do task.wait(2) end
     task.wait(30)
 
     local nextAttempt = os.time() + 60
-    while task.wait(30) do
+    -- Poll the schedule every 15s so we honour the 5-min window
+    -- accurately without hammering the remote.
+    while task.wait(15) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if E and E.AutoGachaFruit == false then return end
@@ -260,7 +274,7 @@ task.spawn(function()
 
             local ok, checkResult = gachaCall("Check")
             if not ok then
-                nextAttempt = os.time() + 300
+                nextAttempt = os.time() + RF_FAIL_RETRY
                 return
             end
 
@@ -275,26 +289,28 @@ task.spawn(function()
             end
 
             if not ready then
-                nextAttempt = os.time() + (30 * 60)
+                -- Not eligible yet — check again in 5 minutes.
+                nextAttempt = os.time() + READY_CHECK_INTERVAL
                 return
             end
 
             local minBeli = (E and E.GachaMinBeli) or 100000
             local beli    = Spirit.ScriptStorage.PlayerData.Beli or 0
             if beli < minBeli then
-                nextAttempt = os.time() + 120
+                nextAttempt = os.time() + BELI_RETRY
                 return
             end
 
             local pok = gachaCall("Purchase")
             if pok then
-                nextAttempt = os.time() + (6 * 60 * 60)
+                -- Successful roll — long lock, no point re-checking.
+                nextAttempt = os.time() + SUCCESS_LOCK
                 task.wait(1)
                 storeSweepNow()
                 task.wait(2)
                 storeSweepNow()
             else
-                nextAttempt = os.time() + (10 * 60)
+                nextAttempt = os.time() + PURCHASE_FAIL_RETRY
             end
         end)
     end
