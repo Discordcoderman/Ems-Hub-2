@@ -44,6 +44,26 @@ Config = Config or {
         GachaMinBeli     = 100000,
         AutoCollectFruit = true,
         CollectInterval  = 10,
+        CollectMode      = "walk",       -- "walk" = CollectDrops tween+pickup, "teleport" = fruit → player
+        AutoRandomFruit  = false,
+        RandomFruitDelay = 60,           -- seconds between Cousin Buy rolls
+        RandomFruitMinBeli = 500000,
+    },
+    Farming = {
+        AutoEliteHunter          = false,
+        AutoDoughKing            = false,
+        DoughKingStopAfterMirror = true,
+        AutoMaterial             = false,
+        MaterialTarget           = "",
+        MaterialTargetCount      = 100,
+        KillAura                 = false,
+        KillAuraRadius           = 2000,
+        AutoChest                = false,
+        AutoChestHop             = false,
+        AutoChestCount           = 20,
+        StopChestAtChalice       = true,
+        SwordMastery600          = false,
+        AutoBoss                 = false,
     },
 }
 Spirit.Config = Config
@@ -146,15 +166,18 @@ Spirit.DropItemData = {
 
 Spirit.SeaIndexes = {"Main", "Dressrosa", "Zou"}
 
--- Tide Keeper and Awakened Ice Admiral excluded — they auto-spawn
--- frequently and shouldn't be auto-farmed. Killed only via the
--- key-farming action in mele.lua when their keys are needed.
 Spirit.BossesOrder = {
-    "Deandre", "Urban", "Diablo", "Soul Reaper"
+    "Deandre", "Urban", "Diablo", "Soul Reaper",
+    "Cake Queen", "Cake Prince", "Longma", "Don Swan",
+    "Beautiful Pirate", "Captain Elephant", "Hydra Leader",
+    "Kilo Admiral", "Stone", "Tide Keeper", "Awakened Ice Admiral",
 }
 Spirit.BossesOrderLevel = {
     ["Awakened Ice Admiral"]=700, ["Tide Keeper"]=700, ["Deandre"]=1500,
     ["Urban"]=1500, ["Diablo"]=1500, ["Soul Reaper"]=1500,
+    ["Cake Queen"]=2175, ["Cake Prince"]=1500, ["Longma"]=2000,
+    ["Don Swan"]=1100, ["Beautiful Pirate"]=1950, ["Captain Elephant"]=1875,
+    ["Hydra Leader"]=1675, ["Kilo Admiral"]=1750, ["Stone"]=1550,
 }
 Spirit.BossesOrderWL = {
     ["Deandre"]=1500, ["Urban"]=1500, ["Diablo"]=1500, ["Don Swan"]=1100,
@@ -206,10 +229,10 @@ Spirit.SEA3 = {
         [3] = CFrame.new(-1836, 11, 1714),
     },
     SWAN_PIRATE_CF         = CFrame.new(-456.29, 73.02, 299.90),
+    SWAN_FARM_CF           = CFrame.new(1057.93, 137.61, 1242.08),
     JEREMY_CF              = CFrame.new(2099.88, 448.93, 648.00),
-    RIPPLE_ENTRY_CF        = CFrame.new(2288.80, 15.19, 863.03),
-    FLAMINGO_PUZZLE_CF     = CFrame.new(-1836, 11, 1714),
-    FLAMINGO_PLATFORM_CFS  = {
+    BARTILO_PLATE_ENTRY_CF = CFrame.new(-1836, 11, 1714),
+    BARTILO_PLATES = {                   -- resolved at runtime against workspace.Map.Dressrosa.BartiloPlates
         CFrame.new(-1850.49, 13.18, 1750.90),
         CFrame.new(-1858.87, 19.38, 1712.02),
         CFrame.new(-1803.94, 16.58, 1750.90),
@@ -219,10 +242,44 @@ Spirit.SEA3 = {
         CFrame.new(-1819.26, 14.80, 1717.91),
         CFrame.new(-1813.52, 14.86, 1724.80),
     },
+    RIPPLE_ENTRY_CF        = CFrame.new(2288.80, 15.19, 863.03),
+    FLAMINGO_PUZZLE_CF     = CFrame.new(-1836, 11, 1714),
     ZOU_PLACE_IDS = {
         [100117331123089] = true,
         [7449423635]      = true,
     },
+}
+
+Spirit.DOUGH_KING = {
+    eliteMobs      = {"Diablo", "Deandre", "Urban"},
+    eliteKillsPer  = 30,
+    cocoaTarget    = 10,
+    cocoaMobs      = {"Chocolate Bar Battler", "Cocoa Warrior"},
+    cocoaFarmCF    = CFrame.new(402, 81, -12259),
+    cakeMobs       = {"Cookie Crafter", "Cake Guard", "Baking Staff", "Head Baker"},
+    cakeAreaCF     = CFrame.new(-2077, 252, -12373),
+    cakeSpawnCF    = CFrame.new(-2124, 69, -12401),
+    doughKingCF    = CFrame.new(-1943.67, 251.50, -12337.88),
+    tradeNPC       = "SweetChaliceNpc",
+    spawnerRemote  = "CakePrinceSpawner",
+}
+
+Spirit.MATERIAL_SOURCES = {
+    ["Angel Wings"]          = {sea=1, mobs={"Shanda","Royal Squad","Royal Soldier"},              cf=CFrame.new(-4698, 845, -1912)},
+    ["Leather"]              = {sea=1, mobs={"Brute","Pirate"},                                   cf=CFrame.new(-1145, 15, 4350)},
+    ["Scrap Metal"]          = {sea=1, mobs={"Brute","Pirate"},                                   cf=CFrame.new(-1145, 15, 4350)},
+    ["Magma Ore"]            = {sea=2, mobs={"Magma Ninja","Lava Pirate"},                        cf=CFrame.new(-5428, 78, -5959)},
+    ["Fish Tail"]            = {sea=3, mobs={"Fishman Raider","Fishman Captain"},                 cf=CFrame.new(-10993, 332, -8940)},
+    ["Ectoplasm"]            = {sea=2, mobs={"Ship Deckhand","Ship Engineer","Ship Steward","Ship Officer"}, cf=CFrame.new(911, 125, 33159)},
+    ["Mystic Droplet"]       = {sea=2, mobs={"Sea Soldier","Water Fighter"},                      cf=CFrame.new(-3385, 239, -10542)},
+    ["Radioactive Material"] = {sea=2, mobs={"Factory Staff"},                                    cf=CFrame.new(295, 73, -56)},
+    ["Vampire Fang"]         = {sea=2, mobs={"Vampire"},                                          cf=CFrame.new(-6033, 7, -1317)},
+    ["Conjured Cocoa"]       = {sea=3, mobs={"Chocolate Bar Battler","Cocoa Warrior"},            cf=CFrame.new(620, 78, -12581)},
+    ["Dragon Scale"]         = {sea=3, mobs={"Dragon Crew Archer","Dragon Crew Warrior"},         cf=CFrame.new(6594, 383, 139)},
+    ["Gunpowder"]            = {sea=3, mobs={"Pistol Billionaire"},                               cf=CFrame.new(-84, 85, 6132)},
+    ["Mini Tusk"]            = {sea=3, mobs={"Mythological Pirate"},                              cf=CFrame.new(-13545, 470, -6917)},
+    ["Demonic Wisp"]         = {sea=3, mobs={"Demonic Soul"},                                     cf=CFrame.new(-9495, 453, 5977)},
+    ["Bones"]                = {sea=3, mobs={"Reborn Skeleton","Living Zombie","Demonic Soul","Posessed Mummy"}, cf=CFrame.new(-9495, 453, 5977)},
 }
 
 Spirit.__data_ready = true
