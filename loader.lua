@@ -5,10 +5,6 @@ local BRANCH = "main"
 local BASE = ("https://raw.githubusercontent.com/Discordcoderman/Ems-Hub-2/%s/%%s"):format(BRANCH)
 local TEAM = "Pirates"
 
--- Load order is dependency-driven. core → data → tween → combat →
--- quests → tasks → ui → player → mele → race → bosses → swords →
--- gacha → utility → quest_sea2 → quest_sea3 → level_farm →
--- level_gates → main. Reordering breaks metatable wiring.
 local MODULES = {
     "core.lua",
     "data.lua",
@@ -19,11 +15,12 @@ local MODULES = {
     "ui.lua",
     "player.lua",
     "mele.lua",
-    "race.lua",       -- file 21 — EvoRace V2 + RaceAwakening V3
+    "race.lua",
     "bosses.lua",
     "swords.lua",
     "gacha.lua",
     "utility.lua",
+    "farming.lua",       -- elite hunter, dough king, materials, kill aura, chest, sword 600, auto boss
     "quest_sea2.lua",
     "quest_sea3.lua",
     "level_farm.lua",
