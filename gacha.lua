@@ -1,6 +1,4 @@
--- gacha.lua — Zioles Gacha boot roll + continuous fruit auto-store
--- Patched: fruit-storage-full detection + auto-recovery probe.
--- Patched: 5-minute readiness re-check when the roll isn't ready yet.
+-- gacha.lua — Zioles Gacha + fruit auto-store + random fruit Cousin Buy
 local Spirit = getgenv().Spirit
 if not Spirit then error("[gacha] core.lua not loaded") end
 
@@ -11,11 +9,7 @@ local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
 
 -- ═══════════════════════════════════════════════════════════════
--- FRUIT STORE SAFE — shared helper for anywhere fruit is stored.
--- Returns true on success. Detects storage-full by N consecutive
--- failures where the tool is still in the backpack after the
--- StoreFruit invoke. Sets _G.FruitStorageFull so fruit priority
--- and the store watcher both skip until recovery.
+-- FRUIT STORE SAFE
 -- ═══════════════════════════════════════════════════════════════
 local fruitStoreFailures = 0
 local FRUIT_STORE_FAIL_THRESHOLD = 3
@@ -30,7 +24,6 @@ function Spirit.StoreFruitSafe(name, tool)
     end)
     task.wait(0.4)
 
-    -- Success check: tool gone from backpack / character.
     local stillHeld = false
     if tool and tool.Parent then
         local parentName = tool.Parent.Name
@@ -51,9 +44,6 @@ function Spirit.StoreFruitSafe(name, tool)
     return true
 end
 
--- Recovery probe — every 5 min, clear the flag so the next store
--- attempt can rebuild the failure count. If storage is still full,
--- the flag re-trips within 3 attempts.
 task.spawn(function()
     while task.wait(300) do
         if _G.FruitStorageFull then
@@ -128,8 +118,6 @@ end
 
 task.spawn(function()
     while task.wait(STORE_COOLDOWN) do
-        -- Skip whole scan while storage is flagged full. Recovery
-        -- probe clears the flag every 5 min.
         if not _G.FruitStorageFull then
             pcall(function()
                 refreshOwnFruitCache()
@@ -141,7 +129,36 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- RF DISCOVERY
+-- RANDOM FRUIT — Cousin Buy driver.
+-- Rolls a random fruit from the Cousin pool on an interval when the
+-- player's Beli is above a floor. Respects Config.Extras toggles.
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while not LocalPlayer:FindFirstChild("Data") do task.wait(2) end
+    task.wait(20)
+
+    while task.wait(5) do
+        pcall(function()
+            local E = Spirit.Config and Spirit.Config.Extras
+            if not E or not E.AutoRandomFruit then return end
+
+            local minBeli = E.RandomFruitMinBeli or 500000
+            local beli    = ScriptStorage.PlayerData.Beli or 0
+            if beli < minBeli then return end
+
+            local lastRoll = Spirit.Storage:Get("LastRandomFruitRoll") or 0
+            local interval = E.RandomFruitDelay or 60
+            if os.time() - lastRoll < interval then return end
+
+            Remotes.CommF_:InvokeServer("Cousin", "Buy")
+            Spirit.Storage:Set("LastRandomFruitRoll", os.time())
+            Spirit.Storage:Save()
+        end)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- ZIOLES GACHA
 -- ═══════════════════════════════════════════════════════════════
 local GachaRF
 local gachaResolved = false
@@ -208,9 +225,6 @@ local function storeSweepNow()
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- BOOT ROLL
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local waited = 0
     while not LocalPlayer:FindFirstChild("Data") and waited < 90 do
@@ -245,27 +259,17 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- ONGOING CYCLE — 5 min readiness poll.
---
--- Every 5 minutes, ask the server whether the player can roll.
--- If yes, roll. If no, wait 5 more minutes.
--- Successful rolls lock for 6 hours — no point re-checking while
--- the cooldown is active.
--- ═══════════════════════════════════════════════════════════════
-local READY_CHECK_INTERVAL = 5 * 60      -- 5 minutes between "can roll?" pings
-local SUCCESS_LOCK         = 6 * 60 * 60 -- 6 hours after a successful roll
-local BELI_RETRY           = 2 * 60      -- if broke, retry in 2 min
-local RF_FAIL_RETRY        = 5 * 60      -- if the RF call fails, retry in 5 min
-local PURCHASE_FAIL_RETRY  = 10 * 60     -- if the roll was refused, retry in 10 min
+local READY_CHECK_INTERVAL = 5 * 60
+local SUCCESS_LOCK         = 6 * 60 * 60
+local BELI_RETRY           = 2 * 60
+local RF_FAIL_RETRY        = 5 * 60
+local PURCHASE_FAIL_RETRY  = 10 * 60
 
 task.spawn(function()
     while not LocalPlayer:FindFirstChild("Data") do task.wait(2) end
     task.wait(30)
 
     local nextAttempt = os.time() + 60
-    -- Poll the schedule every 15s so we honour the 5-min window
-    -- accurately without hammering the remote.
     while task.wait(15) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
@@ -289,7 +293,6 @@ task.spawn(function()
             end
 
             if not ready then
-                -- Not eligible yet — check again in 5 minutes.
                 nextAttempt = os.time() + READY_CHECK_INTERVAL
                 return
             end
@@ -303,7 +306,6 @@ task.spawn(function()
 
             local pok = gachaCall("Purchase")
             if pok then
-                -- Successful roll — long lock, no point re-checking.
                 nextAttempt = os.time() + SUCCESS_LOCK
                 task.wait(1)
                 storeSweepNow()
