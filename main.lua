@@ -168,81 +168,84 @@ end)
 pcall(function() Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO REDEEM — one-time per account, persisted via Spirit.Storage
+-- AUTO REDEEM — runs INLINE, blocks farming until codes are done.
 --
--- Flag "CodesRedeemed_v1". Storage file is per-user
--- (".storage_u_" .. LocalPlayer), so the flag is account-scoped.
--- First boot on a fresh account: fire every code once, set flag,
--- save. Every subsequent boot: read flag, exit before touching the
--- server.
+-- First boot on a fresh account: fires every code, then falls
+-- through to the main loop. Every subsequent boot: reads the
+-- Storage flag, skips in under a millisecond.
 --
--- Max-level accounts are marked done without firing — the codes
--- only grant EXP boosts and stat refunds, worthless at 2800.
+-- Progress is written to the panel's status line so the user sees
+-- each code as it fires. Farming does not start until this block
+-- finishes.
 -- ═══════════════════════════════════════════════════════════════
-task.spawn(function()
-    local REDEEM_CODES = {
-        -- Stat reset codes
-        "SUB2GAMERROBOT_RESET1",
-        "KITT_RESET",
+local REDEEM_CODES = {
+    -- Stat reset codes
+    "SUB2GAMERROBOT_RESET1", "KITT_RESET",
+    -- EXP boost codes
+    "fudd10", "fudd10_v2", "BIGNEWS", "THEGREATACE",
+    "SUB2GAMERROBOT_EXP1", "Sub2UncleKizaru", "Sub2Fer999",
+    "Sub2OfficialNoobie", "Sub2NoobMaster123", "Sub2CaptainMaui",
+    "Sub2Daigrock", "StrawHatMaine", "Axiore", "TantaiGaming",
+    "StarcodeHEO", "JCWK", "MagicBUS", "KittGaming",
+    "Bluxxy", "Enyu_is_Pro", "Chandler",
+    "EASTEREXP", "LIGHTNINGABUSE",
+}
 
-        -- EXP boost codes
-        "fudd10", "fudd10_v2", "BIGNEWS", "THEGREATACE",
-        "SUB2GAMERROBOT_EXP1", "Sub2UncleKizaru", "Sub2Fer999",
-        "Sub2OfficialNoobie", "Sub2NoobMaster123", "Sub2CaptainMaui",
-        "Sub2Daigrock", "StrawHatMaine", "Axiore", "TantaiGaming",
-        "StarcodeHEO", "JCWK", "MagicBUS", "KittGaming",
-        "Bluxxy", "Enyu_is_Pro", "Chandler",
-        "EASTEREXP", "LIGHTNINGABUSE",
-    }
+-- Wait for the pieces the redeem needs.
+repeat task.wait(0.25) until Spirit.Storage
+repeat task.wait(0.25) until ScriptStorage.PlayerData.Level ~= nil
 
-    repeat task.wait(0.5) until Spirit.Storage
-    repeat task.wait(0.5) until ScriptStorage.PlayerData.Level ~= nil
+local redeemNeeded = not Spirit.Storage:Get("CodesRedeemed_v1")
+local levelBlocked = (ScriptStorage.PlayerData.Level or 0) >= Spirit.MaxLevel
 
-    -- Already redeemed on this account → skip everything.
-    if Spirit.Storage:Get("CodesRedeemed_v1") then return end
-
-    -- Max level → codes give nothing. Mark and skip without firing.
-    if (ScriptStorage.PlayerData.Level or 0) >= Spirit.MaxLevel then
-        Spirit.Storage:Set("CodesRedeemed_v1", true)
-        Spirit.Storage:Save()
-        return
-    end
+if redeemNeeded and not levelBlocked then
+    -- Show progress on the panel while we run.
+    SetText("MainTextLabel", "Redeeming codes…")
+    SetText("Task2", "")
 
     local RemotesRS = ReplicatedStorage:WaitForChild("Remotes", 30)
-    if not RemotesRS then return end
-
-    local redeem = RemotesRS:FindFirstChild("Redeem")
-                or RemotesRS:WaitForChild("Redeem", 15)
-    local commF  = RemotesRS:FindFirstChild("CommF_")
-
-    if not redeem and not commF then
-        warn("[main] No Redeem remote found — aborting one-time redeem")
-        return
+    local redeem, commF
+    if RemotesRS then
+        redeem = RemotesRS:FindFirstChild("Redeem")
+              or RemotesRS:WaitForChild("Redeem", 15)
+        commF  = RemotesRS:FindFirstChild("CommF_")
     end
 
-    local sent, failed = 0, 0
-    for _, code in ipairs(REDEEM_CODES) do
-        local ok = pcall(function()
-            if redeem then
-                redeem:InvokeServer(code)
-            else
-                commF:InvokeServer("Redeem", code)
-            end
-        end)
-        if ok then sent = sent + 1 else failed = failed + 1 end
-        task.wait(1.5)
+    if redeem or commF then
+        local sent, failed = 0, 0
+        for i, code in ipairs(REDEEM_CODES) do
+            SetText("Task2", string.format("%d/%d  %s", i, #REDEEM_CODES, code))
+            local ok = pcall(function()
+                if redeem then
+                    redeem:InvokeServer(code)
+                else
+                    commF:InvokeServer("Redeem", code)
+                end
+            end)
+            if ok then sent = sent + 1 else failed = failed + 1 end
+            task.wait(1.5)
+        end
+        warn(string.format("[main] Redeem complete — %d sent, %d skipped", sent, failed))
+    else
+        warn("[main] No Redeem remote — skipping redeem")
     end
 
-    -- Mark attempted even if some failed — expired codes won't
-    -- start working on retry, and we don't want to spam the server
-    -- every session. The flag records "attempted on this account".
+    -- Mark attempted. Expired codes won't start working on retry.
     Spirit.Storage:Set("CodesRedeemed_v1", true)
     Spirit.Storage:Save()
+elseif not Spirit.Storage:Get("CodesRedeemed_v1") then
+    -- Max level — no point redeeming. Mark done silently.
+    Spirit.Storage:Set("CodesRedeemed_v1", true)
+    Spirit.Storage:Save()
+end
 
-    warn(string.format("[main] Redeem complete — %d sent, %d skipped", sent, failed))
-end)
+-- Redeem done. Clear the status line so the task loop can take over.
+SetText("MainTextLabel", "Loaded — waiting for player data...")
+SetText("Task2", "")
 
--- Idle timer writer (feeds UI uptime label)
+-- ═══════════════════════════════════════════════════════════════
+-- IDLE TIMER WRITER
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -257,10 +260,8 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- MAIN LOOP
+-- MAIN LOOP — only reached after redeem is complete
 -- ═══════════════════════════════════════════════════════════════
-SetText("MainTextLabel", "Loaded — waiting for player data...")
-
 while task.wait() do
     pcall(Spirit.RefreshPlayerData)
 
