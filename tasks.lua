@@ -92,7 +92,6 @@ local TASKS_TO_REGISTER = {
     "RaidController","AutoRaidIce","MeleesController","Superhuman","DeathStep",
     "SharkmanKarate","ElectricClaw","DragonTalon","Godhuman","BossesTask",
     "SpecialBossesTask","CollectDrops","CollectBerries","UtillyItemsActivitation",
-    -- farming.lua tasks
     "AutoEliteHunterTask", "AutoDoughKingTask", "AutoMaterialTask",
     "KillAuraTask", "AutoChestTask", "SwordMastery600Task", "AutoBossTask",
 }
@@ -100,9 +99,6 @@ for _, taskName in ipairs(TASKS_TO_REGISTER) do
     FunctionsHandler[taskName]:Register()
 end
 
--- Farming tasks live above LevelFarm so they preempt normal level farm
--- when their config flag is on. Config default is false, so on a fresh
--- boot the dispatcher still goes straight to LevelFarm.
 Spirit.TasksOrder = {
     "Saber",
     "MeleesController",
@@ -205,10 +201,43 @@ local function runPirateRaidPriority()
     return true
 end
 
+-- Nothing enabled, nothing running — stay put.
+local function allWorkDisabled()
+    local cfg = Spirit.Config
+    if not cfg then return false end
+    if not cfg.Farming then return false end
+
+    local anyFarmingActive =
+        cfg.Farming.AutoEliteHunter or cfg.Farming.AutoDoughKing
+        or cfg.Farming.AutoMaterial   or cfg.Farming.KillAura
+        or cfg.Farming.AutoChest      or cfg.Farming.SwordMastery600
+        or cfg.Farming.AutoBoss
+    if anyFarmingActive then return false end
+
+    local anyItemsActive = cfg.Items and (
+        cfg.Items.Saber or cfg.Items.AutoFullyMelees
+        or cfg.Items.CursedDualKatana or cfg.Items.SoulGuitar
+        or cfg.Items.RaceV2 or cfg.Items.AutoRaceV3
+    )
+    if anyItemsActive then return false end
+
+    if cfg.AutoSea2 then return false end
+    if cfg.AutoSea3 then return false end
+    if cfg.AutoRaidIce_TargetFragments and cfg.AutoRaidIce_TargetFragments > 0 then return false end
+
+    return true
+end
+
 function Spirit.RefreshTasksData()
     if _G.Stop then return end
     if _G.SeaTransitionActive then return end
     if _G.SkyTransitionActive then return end
+
+    if allWorkDisabled() then
+        Spirit.SetTask("MainTask", "Idle")
+        Spirit.SetTask("SubTask", "—")
+        return
+    end
 
     if runFruitPriority()      then return end
     if runRaidPriority()       then return end
