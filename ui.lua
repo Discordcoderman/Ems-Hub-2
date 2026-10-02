@@ -1,27 +1,18 @@
--- ui.lua — Bacon Hub style HUD
---   · top-left menu button + live pill
---   · top-center title / status / beli bar / fragment bar
---   · bottom-left gold Menu toggle, level circle, uptime
---   · bottom-right MELEE TRACKER card — auto-advances through
---     MASTERY_TRAIN_ORDER, skips already-owned melees, shows the
---     next melee to buy with its real Beli/Fragment requirements
---   · EnableAntiLag() called once at load — permanent optimisation
---
--- API compatibility with the rest of the suite is preserved:
---   EmsUI.SetText, SetStats, SetStatus, SetSubStatus,
---   SetRedeemStatus, Toggle, LevelLabel, BeliLabel, FragLabel,
---   RaceLabel, TimerLabel, ScreenGui, Panel
+-- ui.lua — Bacon Hub style compact HUD
+--   · top-center: brand, status, long-form timer, stat rows, melee
+--   · bottom-left: MENU toggle + level circle
+--   · idle hover: when MainTask == "Idle" for 2s, character rises to
+--     Y = 952 and holds — releases the moment any task resumes
+--   · API compat: SetText / SetStats / SetStatus / Toggle / Panel
 local Spirit = getgenv().Spirit
 if not Spirit then error("[ui] core.lua not loaded") end
 
 local Players       = Spirit.Players
 local CoreGui       = Spirit.CoreGui
-local TweenService  = Spirit.TweenService
 local LocalPlayer   = Spirit.LocalPlayer
 local Lighting      = Spirit.Services.Lighting
 local ScriptStorage = Spirit.ScriptStorage
 
--- Nuke any prior instance
 for _, container in ipairs({CoreGui, LocalPlayer:FindFirstChild("PlayerGui")}) do
     if container then
         pcall(function()
@@ -31,36 +22,32 @@ for _, container in ipairs({CoreGui, LocalPlayer:FindFirstChild("PlayerGui")}) d
     end
 end
 
-local EmsUI = {Instances = {}, Config = {AntiLag = true}}
+local EmsUI = {Instances = {}, Config = {AntiLag = true, IdleHeight = 952}}
 Spirit.EmsUI = EmsUI
 
 -- ── Palette ────────────────────────────────────────────────────
 local C = {
-    bg        = Color3.fromRGB(10, 10, 12),
-    panel     = Color3.fromRGB(18, 18, 22),
-    panelSoft = Color3.fromRGB(26, 26, 32),
-    line      = Color3.fromRGB(46, 46, 54),
-    text      = Color3.fromRGB(238, 238, 242),
-    textDim   = Color3.fromRGB(150, 150, 160),
-    textFaint = Color3.fromRGB(88, 88, 96),
-    title     = Color3.fromRGB(198, 120, 255),
-    green     = Color3.fromRGB(106, 204, 92),
-    greenDark = Color3.fromRGB(28, 54, 28),
-    blue      = Color3.fromRGB(72, 148, 232),
-    blueDark  = Color3.fromRGB(24, 46, 88),
+    bg        = Color3.fromRGB(8, 8, 10),
+    panel     = Color3.fromRGB(14, 14, 18),
+    line      = Color3.fromRGB(48, 48, 56),
+    text      = Color3.fromRGB(240, 240, 244),
+    textDim   = Color3.fromRGB(160, 160, 172),
+    textFaint = Color3.fromRGB(96, 96, 108),
+    brand     = Color3.fromRGB(186, 108, 240),
+    brandHot  = Color3.fromRGB(232, 140, 255),
+    blue      = Color3.fromRGB(102, 176, 255),
     gold      = Color3.fromRGB(232, 190, 82),
-    red       = Color3.fromRGB(220, 92, 92),
-    ok        = Color3.fromRGB(120, 210, 130),
+    green     = Color3.fromRGB(120, 210, 130),
+    red       = Color3.fromRGB(220, 100, 100),
     shadow    = Color3.fromRGB(0, 0, 0),
 }
 
-local FONT_LABEL = Enum.Font.GothamMedium
+local FONT_LABEL = Enum.Font.Gotham
+local FONT_MED   = Enum.Font.GothamMedium
 local FONT_BOLD  = Enum.Font.GothamBold
 local FONT_BRAND = Enum.Font.GothamBlack
 local FONT_VALUE = Enum.Font.RobotoMono
-local FONT_CODE  = Enum.Font.Code
 
--- ── Helpers ────────────────────────────────────────────────────
 local function corner(parent, r)
     local c = Instance.new("UICorner", parent)
     c.CornerRadius = UDim.new(0, r or 6)
@@ -91,408 +78,244 @@ gui.IgnoreGuiInset = true
 EmsUI.ScreenGui = gui
 
 -- ═══════════════════════════════════════════════════════════════
--- TOP-LEFT — floating menu button + live pill
+-- MAIN PANEL — centered stack
 -- ═══════════════════════════════════════════════════════════════
-local topLeft = Instance.new("Frame")
-topLeft.Parent = gui
-topLeft.Position = UDim2.new(0, 16, 0, 16)
-topLeft.Size = UDim2.new(0, 220, 0, 32)
-topLeft.BackgroundTransparency = 1
+local panel = Instance.new("Frame")
+panel.Name             = "Panel"
+panel.Parent           = gui
+panel.AnchorPoint      = Vector2.new(0.5, 0)
+panel.Position         = UDim2.new(0.5, 0, 0, 24)
+panel.Size             = UDim2.new(0, 340, 0, 262)
+panel.BackgroundColor3 = C.bg
+panel.BackgroundTransparency = 0.08
+panel.BorderSizePixel  = 0
+panel.Active           = true
+panel.Draggable        = true
+corner(panel, 8)
+stroke(panel, C.line)
+EmsUI.Panel = panel
 
-local menuBtn = Instance.new("TextButton")
-menuBtn.Parent = topLeft
-menuBtn.Size = UDim2.new(0, 32, 0, 32)
-menuBtn.BackgroundColor3 = C.bg
-menuBtn.Text = "☰"
-menuBtn.TextColor3 = C.text
-menuBtn.Font = FONT_BOLD
-menuBtn.TextSize = 16
-menuBtn.BorderSizePixel = 0
-menuBtn.AutoButtonColor = false
-corner(menuBtn, 16)
-stroke(menuBtn, C.line)
+-- ── Brand title (two-line, like the screenshot) ───────────────
+local brandTop = Instance.new("TextLabel")
+brandTop.Parent = panel
+brandTop.BackgroundTransparency = 1
+brandTop.Position = UDim2.new(0, 0, 0, 10)
+brandTop.Size = UDim2.new(1, 0, 0, 26)
+brandTop.Text = "FREE"
+brandTop.Font = FONT_BRAND
+brandTop.TextSize = 24
+brandTop.TextColor3 = C.brand
+brandTop.TextXAlignment = Enum.TextXAlignment.Center
+brandTop.TextStrokeTransparency = 0.6
+brandTop.TextStrokeColor3 = C.shadow
 
-local livePill = Instance.new("Frame")
-livePill.Parent = topLeft
-livePill.Position = UDim2.new(0, 40, 0, 6)
-livePill.Size = UDim2.new(0, 78, 0, 20)
-livePill.BackgroundColor3 = C.panel
-livePill.BorderSizePixel = 0
-corner(livePill, 10)
-stroke(livePill, C.line)
+local brandBot = Instance.new("TextLabel")
+brandBot.Parent = panel
+brandBot.BackgroundTransparency = 1
+brandBot.Position = UDim2.new(0, 0, 0, 34)
+brandBot.Size = UDim2.new(1, 0, 0, 26)
+brandBot.Text = "KAITUN"
+brandBot.Font = FONT_BRAND
+brandBot.TextSize = 22
+brandBot.TextColor3 = C.brandHot
+brandBot.TextXAlignment = Enum.TextXAlignment.Center
+brandBot.TextStrokeTransparency = 0.6
+brandBot.TextStrokeColor3 = C.shadow
 
-local liveDot = Instance.new("Frame")
-liveDot.Parent = livePill
-liveDot.Position = UDim2.new(0, 8, 0.5, -3)
-liveDot.Size = UDim2.new(0, 6, 0, 6)
-liveDot.BackgroundColor3 = C.ok
-liveDot.BorderSizePixel = 0
-corner(liveDot, 3)
-
-local liveTxt = Instance.new("TextLabel")
-liveTxt.Parent = livePill
-liveTxt.BackgroundTransparency = 1
-liveTxt.Position = UDim2.new(0, 18, 0, 0)
-liveTxt.Size = UDim2.new(1, -22, 1, 0)
-liveTxt.Text = "LIVE"
-liveTxt.Font = FONT_LABEL
-liveTxt.TextSize = 10
-liveTxt.TextColor3 = C.textDim
-liveTxt.TextXAlignment = Enum.TextXAlignment.Left
-
--- ═══════════════════════════════════════════════════════════════
--- TOP-CENTER — title / status / beli bar / fragment bar
--- ═══════════════════════════════════════════════════════════════
-local hud = Instance.new("Frame")
-hud.Parent = gui
-hud.AnchorPoint = Vector2.new(0.5, 0)
-hud.Position = UDim2.new(0.5, 0, 0, 22)
-hud.Size = UDim2.new(0, 460, 0, 158)
-hud.BackgroundColor3 = C.bg
-hud.BackgroundTransparency = 0.15
-hud.BorderSizePixel = 0
-corner(hud, 12)
-stroke(hud, C.line)
-EmsUI.Panel = hud
-
--- Brand row: icon + title
-local brandIcon = Instance.new("ImageLabel")
-brandIcon.Parent = hud
-brandIcon.Position = UDim2.new(0, 16, 0, 12)
-brandIcon.Size = UDim2.new(0, 26, 0, 26)
-brandIcon.BackgroundTransparency = 1
-brandIcon.Image = "rbxassetid://110860238184556" -- generic hub mark; swap if you have one
-brandIcon.ImageColor3 = C.title
-
-local titleLbl = Instance.new("TextLabel")
-titleLbl.Parent = hud
-titleLbl.BackgroundTransparency = 1
-titleLbl.Position = UDim2.new(0, 52, 0, 10)
-titleLbl.Size = UDim2.new(1, -70, 0, 30)
-titleLbl.Text = "EMS Hub · Kaitun"
-titleLbl.Font = FONT_BRAND
-titleLbl.TextSize = 22
-titleLbl.TextColor3 = C.title
-titleLbl.TextXAlignment = Enum.TextXAlignment.Center
-
--- Status line
+-- ── Status ────────────────────────────────────────────────────
 local statusLbl = Instance.new("TextLabel")
-statusLbl.Parent = hud
+statusLbl.Parent = panel
 statusLbl.BackgroundTransparency = 1
-statusLbl.Position = UDim2.new(0, 16, 0, 46)
-statusLbl.Size = UDim2.new(1, -32, 0, 20)
+statusLbl.Position = UDim2.new(0, 12, 0, 70)
+statusLbl.Size = UDim2.new(1, -24, 0, 16)
 statusLbl.Text = "Status : Idle"
-statusLbl.Font = FONT_LABEL
-statusLbl.TextSize = 15
+statusLbl.Font = FONT_MED
+statusLbl.TextSize = 13
 statusLbl.TextColor3 = C.text
 statusLbl.TextXAlignment = Enum.TextXAlignment.Center
 statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
+EmsUI.StatusLabel = statusLbl
 
--- Progress bar factory
-local function makeBar(yPos, fillColor, bgColor)
-    local wrap = Instance.new("Frame")
-    wrap.Parent = hud
-    wrap.Position = UDim2.new(0, 16, 0, yPos)
-    wrap.Size = UDim2.new(1, -32, 0, 22)
-    wrap.BackgroundColor3 = bgColor
-    wrap.BorderSizePixel = 0
-    wrap.ClipsDescendants = true
-    corner(wrap, 11)
+-- ── Long-form timer ───────────────────────────────────────────
+local timerLbl = Instance.new("TextLabel")
+timerLbl.Parent = panel
+timerLbl.BackgroundTransparency = 1
+timerLbl.Position = UDim2.new(0, 12, 0, 90)
+timerLbl.Size = UDim2.new(1, -24, 0, 16)
+timerLbl.Text = "0 Hours, 0 Minutes, 0 Seconds"
+timerLbl.Font = FONT_LABEL
+timerLbl.TextSize = 12
+timerLbl.TextColor3 = C.textDim
+timerLbl.TextXAlignment = Enum.TextXAlignment.Center
+EmsUI.TimerLabel = timerLbl
 
-    local fill = Instance.new("Frame")
-    fill.Parent = wrap
-    fill.Size = UDim2.new(0, 0, 1, 0)
-    fill.BackgroundColor3 = fillColor
-    fill.BorderSizePixel = 0
-    corner(fill, 11)
+-- ── Level / Beli row ─────────────────────────────────────────
+local levelBeliRow = Instance.new("Frame")
+levelBeliRow.Parent = panel
+levelBeliRow.Position = UDim2.new(0, 12, 0, 118)
+levelBeliRow.Size = UDim2.new(1, -24, 0, 18)
+levelBeliRow.BackgroundTransparency = 1
 
-    local txt = Instance.new("TextLabel")
-    txt.Parent = wrap
-    txt.BackgroundTransparency = 1
-    txt.Size = UDim2.new(1, 0, 1, 0)
-    txt.Font = FONT_BOLD
-    txt.TextSize = 13
-    txt.TextColor3 = C.text
-    txt.Text = "0 / 0"
-    txt.TextXAlignment = Enum.TextXAlignment.Center
-    txt.ZIndex = 2
+local levelLbl = Instance.new("TextLabel")
+levelLbl.Parent = levelBeliRow
+levelLbl.BackgroundTransparency = 1
+levelLbl.Size = UDim2.new(0.5, 0, 1, 0)
+levelLbl.Position = UDim2.new(0, 0, 0, 0)
+levelLbl.Text = "Level: 0"
+levelLbl.Font = FONT_MED
+levelLbl.TextSize = 13
+levelLbl.TextColor3 = C.text
+levelLbl.TextXAlignment = Enum.TextXAlignment.Left
+EmsUI.LevelLabel = levelLbl
 
-    return wrap, fill, txt
+local beliLbl = Instance.new("TextLabel")
+beliLbl.Parent = levelBeliRow
+beliLbl.BackgroundTransparency = 1
+beliLbl.Size = UDim2.new(0.5, 0, 1, 0)
+beliLbl.Position = UDim2.new(0.5, 0, 0, 0)
+beliLbl.Text = "Beli: 0"
+beliLbl.Font = FONT_MED
+beliLbl.TextSize = 13
+beliLbl.TextColor3 = C.text
+beliLbl.TextXAlignment = Enum.TextXAlignment.Right
+EmsUI.BeliLabel = beliLbl
+
+-- ── Fragment / Race row ──────────────────────────────────────
+local fragRaceRow = Instance.new("Frame")
+fragRaceRow.Parent = panel
+fragRaceRow.Position = UDim2.new(0, 12, 0, 142)
+fragRaceRow.Size = UDim2.new(1, -24, 0, 18)
+fragRaceRow.BackgroundTransparency = 1
+
+local fragLbl = Instance.new("TextLabel")
+fragLbl.Parent = fragRaceRow
+fragLbl.BackgroundTransparency = 1
+fragLbl.Size = UDim2.new(0.5, 0, 1, 0)
+fragLbl.Position = UDim2.new(0, 0, 0, 0)
+fragLbl.Text = "Fragment: 0"
+fragLbl.Font = FONT_MED
+fragLbl.TextSize = 13
+fragLbl.TextColor3 = C.blue
+fragLbl.TextXAlignment = Enum.TextXAlignment.Left
+EmsUI.FragLabel = fragLbl
+
+local raceLbl = Instance.new("TextLabel")
+raceLbl.Parent = fragRaceRow
+raceLbl.BackgroundTransparency = 1
+raceLbl.Size = UDim2.new(0.5, 0, 1, 0)
+raceLbl.Position = UDim2.new(0.5, 0, 0, 0)
+raceLbl.Text = "Race: —"
+raceLbl.Font = FONT_MED
+raceLbl.TextSize = 13
+raceLbl.TextColor3 = C.blue
+raceLbl.TextXAlignment = Enum.TextXAlignment.Right
+EmsUI.RaceLabel = raceLbl
+
+-- ── Melee line ───────────────────────────────────────────────
+local meleeLbl = Instance.new("TextLabel")
+meleeLbl.Parent = panel
+meleeLbl.BackgroundTransparency = 1
+meleeLbl.Position = UDim2.new(0, 12, 0, 172)
+meleeLbl.Size = UDim2.new(1, -24, 0, 18)
+meleeLbl.Text = "Melee: —"
+meleeLbl.Font = FONT_MED
+meleeLbl.TextSize = 13
+meleeLbl.TextColor3 = C.gold
+meleeLbl.TextXAlignment = Enum.TextXAlignment.Center
+meleeLbl.TextTruncate = Enum.TextTruncate.AtEnd
+EmsUI.MeleeLabel = meleeLbl
+
+-- ── Footer — codes redeemed ──────────────────────────────────
+local footerLbl = Instance.new("TextLabel")
+footerLbl.Parent = panel
+footerLbl.BackgroundTransparency = 1
+footerLbl.Position = UDim2.new(0, 12, 0, 208)
+footerLbl.Size = UDim2.new(1, -24, 0, 16)
+footerLbl.Text = "0 Codes Redeemed"
+footerLbl.Font = FONT_LABEL
+footerLbl.TextSize = 11
+footerLbl.TextColor3 = C.green
+footerLbl.TextXAlignment = Enum.TextXAlignment.Center
+EmsUI.FooterLabel = footerLbl
+
+-- ── Thin divider above footer ────────────────────────────────
+local div = Instance.new("Frame")
+div.Parent = panel
+div.Position = UDim2.new(0, 20, 0, 196)
+div.Size = UDim2.new(1, -40, 0, 1)
+div.BackgroundColor3 = C.line
+div.BackgroundTransparency = 0.4
+div.BorderSizePixel = 0
+
+-- ── Bottom hint / uptime pill ────────────────────────────────
+local uptimeLbl = Instance.new("TextLabel")
+uptimeLbl.Parent = panel
+uptimeLbl.BackgroundTransparency = 1
+uptimeLbl.Position = UDim2.new(0, 12, 0, 228)
+uptimeLbl.Size = UDim2.new(1, -24, 0, 22)
+uptimeLbl.Text = "session 00:00:00"
+uptimeLbl.Font = FONT_VALUE
+uptimeLbl.TextSize = 11
+uptimeLbl.TextColor3 = C.textFaint
+uptimeLbl.TextXAlignment = Enum.TextXAlignment.Center
+EmsUI.SessionLabel = uptimeLbl
+
+-- ═══════════════════════════════════════════════════════════════
+-- BOTTOM-LEFT — MENU toggle
+-- ═══════════════════════════════════════════════════════════════
+local menuBtn = Instance.new("TextButton")
+menuBtn.Name = "EmsFloat"
+menuBtn.Parent = gui
+menuBtn.AnchorPoint = Vector2.new(0, 1)
+menuBtn.Position = UDim2.new(0, 16, 1, -16)
+menuBtn.Size = UDim2.new(0, 92, 0, 30)
+menuBtn.BackgroundColor3 = C.gold
+menuBtn.Text = "MENU"
+menuBtn.Font = FONT_BRAND
+menuBtn.TextSize = 13
+menuBtn.TextColor3 = Color3.fromRGB(28, 20, 4)
+menuBtn.BorderSizePixel = 0
+menuBtn.AutoButtonColor = false
+menuBtn.Draggable = true
+menuBtn.Active = true
+corner(menuBtn, 6)
+
+local panelVisible = true
+local function setPanelVisible(v)
+    panelVisible = v
+    panel.Visible = v
 end
-
-local _, beliFill, beliTxt = makeBar(72, C.green, C.greenDark)
-local _, fragFill, fragTxt = makeBar(102, C.blue,  C.blueDark)
-EmsUI.BeliFill = beliFill
-EmsUI.FragFill = fragFill
-
--- Small caption row (level / race)
-local captionLbl = Instance.new("TextLabel")
-captionLbl.Parent = hud
-captionLbl.BackgroundTransparency = 1
-captionLbl.Position = UDim2.new(0, 16, 0, 130)
-captionLbl.Size = UDim2.new(1, -32, 0, 16)
-captionLbl.Text = "Level — · Race —"
-captionLbl.Font = FONT_LABEL
-captionLbl.TextSize = 11
-captionLbl.TextColor3 = C.textDim
-captionLbl.TextXAlignment = Enum.TextXAlignment.Center
-EmsUI.CaptionLabel = captionLbl
+menuBtn.MouseButton1Click:Connect(function() setPanelVisible(not panelVisible) end)
 
 -- ═══════════════════════════════════════════════════════════════
--- BOTTOM-LEFT — gold Menu toggle, level circle, uptime
+-- MELEE STATE — current training target
 -- ═══════════════════════════════════════════════════════════════
-local bottomLeft = Instance.new("Frame")
-bottomLeft.Parent = gui
-bottomLeft.AnchorPoint = Vector2.new(0, 1)
-bottomLeft.Position = UDim2.new(0, 16, 1, -16)
-bottomLeft.Size = UDim2.new(0, 240, 0, 72)
-bottomLeft.BackgroundTransparency = 1
-
-local menuToggle = Instance.new("TextButton")
-menuToggle.Parent = bottomLeft
-menuToggle.Position = UDim2.new(0, 0, 1, -32)
-menuToggle.Size = UDim2.new(0, 96, 0, 30)
-menuToggle.BackgroundColor3 = C.gold
-menuToggle.Text = "MENU"
-menuToggle.Font = FONT_BRAND
-menuToggle.TextSize = 13
-menuToggle.TextColor3 = Color3.fromRGB(30, 22, 4)
-menuToggle.BorderSizePixel = 0
-menuToggle.AutoButtonColor = false
-corner(menuToggle, 6)
-
-local levelCircle = Instance.new("Frame")
-levelCircle.Parent = bottomLeft
-levelCircle.Position = UDim2.new(0, 104, 1, -36)
-levelCircle.Size = UDim2.new(0, 40, 0, 40)
-levelCircle.BackgroundColor3 = C.panel
-levelCircle.BorderSizePixel = 0
-corner(levelCircle, 20)
-stroke(levelCircle, C.gold, 2)
-
-local levelTxt = Instance.new("TextLabel")
-levelTxt.Parent = levelCircle
-levelTxt.BackgroundTransparency = 1
-levelTxt.Size = UDim2.new(1, 0, 1, -6)
-levelTxt.Position = UDim2.new(0, 0, 0, 2)
-levelTxt.Text = "1"
-levelTxt.Font = FONT_BRAND
-levelTxt.TextSize = 16
-levelTxt.TextColor3 = C.gold
-
-local lvlCaption = Instance.new("TextLabel")
-lvlCaption.Parent = levelCircle
-lvlCaption.BackgroundTransparency = 1
-lvlCaption.Position = UDim2.new(0, 0, 0, 24)
-lvlCaption.Size = UDim2.new(1, 0, 0, 10)
-lvlCaption.Text = "CẤP"
-lvlCaption.Font = FONT_LABEL
-lvlCaption.TextSize = 8
-lvlCaption.TextColor3 = C.textFaint
-EmsUI.LevelLabel = levelTxt
-
-local uptimePill = Instance.new("Frame")
-uptimePill.Parent = bottomLeft
-uptimePill.Position = UDim2.new(0, 152, 1, -30)
-uptimePill.Size = UDim2.new(0, 84, 0, 24)
-uptimePill.BackgroundColor3 = C.panel
-uptimePill.BorderSizePixel = 0
-corner(uptimePill, 12)
-stroke(uptimePill, C.line)
-
-local uptimeTxt = Instance.new("TextLabel")
-uptimeTxt.Parent = uptimePill
-uptimeTxt.BackgroundTransparency = 1
-uptimeTxt.Size = UDim2.new(1, -14, 1, 0)
-uptimeTxt.Position = UDim2.new(0, 7, 0, 0)
-uptimeTxt.Text = "00:00:00"
-uptimeTxt.Font = FONT_CODE
-uptimeTxt.TextSize = 11
-uptimeTxt.TextColor3 = C.textDim
-uptimeTxt.TextXAlignment = Enum.TextXAlignment.Left
-EmsUI.TimerLabel = uptimeTxt
-
--- ═══════════════════════════════════════════════════════════════
--- BOTTOM-RIGHT — MELEE TRACKER
--- ═══════════════════════════════════════════════════════════════
-local meleeCard = Instance.new("Frame")
-meleeCard.Parent = gui
-meleeCard.AnchorPoint = Vector2.new(1, 1)
-meleeCard.Position = UDim2.new(1, -16, 1, -16)
-meleeCard.Size = UDim2.new(0, 320, 0, 130)
-meleeCard.BackgroundColor3 = C.bg
-meleeCard.BackgroundTransparency = 0.15
-meleeCard.BorderSizePixel = 0
-corner(meleeCard, 10)
-stroke(meleeCard, C.line)
-EmsUI.MeleeCard = meleeCard
-
-local meleeHeader = Instance.new("TextLabel")
-meleeHeader.Parent = meleeCard
-meleeHeader.BackgroundTransparency = 1
-meleeHeader.Position = UDim2.new(0, 14, 0, 8)
-meleeHeader.Size = UDim2.new(1, -28, 0, 14)
-meleeHeader.Text = "MELEE TRACKER"
-meleeHeader.Font = FONT_BRAND
-meleeHeader.TextSize = 11
-meleeHeader.TextColor3 = C.gold
-meleeHeader.TextXAlignment = Enum.TextXAlignment.Left
-
--- Current row
-local curName = Instance.new("TextLabel")
-curName.Parent = meleeCard
-curName.BackgroundTransparency = 1
-curName.Position = UDim2.new(0, 14, 0, 28)
-curName.Size = UDim2.new(1, -28, 0, 16)
-curName.Text = "Current —"
-curName.Font = FONT_BOLD
-curName.TextSize = 13
-curName.TextColor3 = C.text
-curName.TextXAlignment = Enum.TextXAlignment.Left
-EmsUI.MeleeCurrentName = curName
-
-local curBarBg = Instance.new("Frame")
-curBarBg.Parent = meleeCard
-curBarBg.Position = UDim2.new(0, 14, 0, 48)
-curBarBg.Size = UDim2.new(1, -28, 0, 14)
-curBarBg.BackgroundColor3 = C.panelSoft
-curBarBg.BorderSizePixel = 0
-corner(curBarBg, 7)
-
-local curBarFill = Instance.new("Frame")
-curBarFill.Parent = curBarBg
-curBarFill.Size = UDim2.new(0, 0, 1, 0)
-curBarFill.BackgroundColor3 = C.gold
-curBarFill.BorderSizePixel = 0
-corner(curBarFill, 7)
-
-local curBarTxt = Instance.new("TextLabel")
-curBarTxt.Parent = curBarBg
-curBarTxt.BackgroundTransparency = 1
-curBarTxt.Size = UDim2.new(1, 0, 1, 0)
-curBarTxt.Font = FONT_VALUE
-curBarTxt.TextSize = 10
-curBarTxt.TextColor3 = C.text
-curBarTxt.Text = "0 / 400"
-EmsUI.MeleeMasteryTxt = curBarTxt
-
--- Next row
-local nextName = Instance.new("TextLabel")
-nextName.Parent = meleeCard
-nextName.BackgroundTransparency = 1
-nextName.Position = UDim2.new(0, 14, 0, 70)
-nextName.Size = UDim2.new(1, -28, 0, 14)
-nextName.Text = "Next —"
-nextName.Font = FONT_LABEL
-nextName.TextSize = 11
-nextName.TextColor3 = C.textDim
-nextName.TextXAlignment = Enum.TextXAlignment.Left
-EmsUI.MeleeNextName = nextName
-
-local nextReq = Instance.new("TextLabel")
-nextReq.Parent = meleeCard
-nextReq.BackgroundTransparency = 1
-nextReq.Position = UDim2.new(0, 14, 0, 86)
-nextReq.Size = UDim2.new(1, -28, 0, 16)
-nextReq.Text = "—"
-nextReq.Font = FONT_VALUE
-nextReq.TextSize = 11
-nextReq.TextColor3 = C.text
-nextReq.TextXAlignment = Enum.TextXAlignment.Left
-nextReq.TextTruncate = Enum.TextTruncate.AtEnd
-EmsUI.MeleeNextReq = nextReq
-
--- Owned / locked indicator
-local reqStatus = Instance.new("TextLabel")
-reqStatus.Parent = meleeCard
-reqStatus.BackgroundTransparency = 1
-reqStatus.Position = UDim2.new(0, 14, 0, 104)
-reqStatus.Size = UDim2.new(1, -28, 0, 14)
-reqStatus.Text = ""
-reqStatus.Font = FONT_LABEL
-reqStatus.TextSize = 11
-reqStatus.TextColor3 = C.textDim
-reqStatus.TextXAlignment = Enum.TextXAlignment.Left
-EmsUI.MeleeStatus = reqStatus
-
--- Menu toggle behaviour
-local hudVisible = true
-local function setHudVisible(v)
-    hudVisible = v
-    hud.Visible = v
-    meleeCard.Visible = v
-    bottomLeft.Visible = v
-end
-menuToggle.MouseButton1Click:Connect(function() setHudVisible(not hudVisible) end)
-menuBtn.MouseButton1Click:Connect(function() setHudVisible(not hudVisible) end)
-
--- ═══════════════════════════════════════════════════════════════
--- MELEE STATE — reads live data, auto-advances
--- ═══════════════════════════════════════════════════════════════
-local function meleeReqString(name)
-    local p = Spirit.MeleePrices and Spirit.MeleePrices[name]
-    if not p then return "—" end
-    local parts = {}
-    if p.Price and p.Price.Beli then
-        table.insert(parts, "$" .. shortNum(p.Price.Beli))
-    end
-    if p.Price and p.Price.Fragments then
-        table.insert(parts, shortNum(p.Price.Fragments) .. " frag")
-    end
-    if #parts == 0 then return "—" end
-    return table.concat(parts, "  +  ")
-end
-
-local function getMeleeState()
+local function currentMeleeString()
     local order = Spirit.MASTERY_TRAIN_ORDER or {}
     local owned = ScriptStorage.Melees or {}
-
-    local current, currentIdx = nil, 0
-
-    -- 1st owned melee that hasn't hit its mastery target
-    for i, entry in ipairs(order) do
+    for _, entry in ipairs(order) do
         local m = owned[entry.name]
         if m and m < entry.target then
-            current    = entry
-            currentIdx = i
-            break
+            return string.format("%s  %d / %d", entry.name, m, entry.target)
         end
     end
-
-    -- else: 1st melee not yet bought
-    if not current then
-        for i, entry in ipairs(order) do
-            if not owned[entry.name] then
-                current    = entry
-                currentIdx = i
-                break
-            end
+    for _, entry in ipairs(order) do
+        if not owned[entry.name] then
+            return string.format("%s  (not owned)", entry.name)
         end
     end
-
-    -- next = 1st not-owned melee AFTER current, skipping anything already bought
-    local nextM = nil
-    if currentIdx > 0 then
-        for j = currentIdx + 1, #order do
-            if not owned[order[j].name] then
-                nextM = order[j]
-                break
-            end
-        end
-    end
-
-    return current, currentIdx, nextM
+    return "all melees complete"
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- ANTI-LAG — permanent optimisation pass
+-- ANTI-LAG
 -- ═══════════════════════════════════════════════════════════════
 local function stripInstance(obj)
     if not obj or not obj.Parent then return end
     if obj:IsA("BasePart") then
-        obj.Material    = Enum.Material.Plastic
+        obj.Material = Enum.Material.Plastic
         obj.Reflectance = 0
-        obj.CastShadow  = false
+        obj.CastShadow = false
     elseif obj:IsA("Decal") or obj:IsA("Texture") then
         obj.Transparency = 1
     elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail")
@@ -507,14 +330,12 @@ end
 
 function EmsUI.EnableAntiLag()
     EmsUI.Config.AntiLag = true
-
-    -- Lighting / atmosphere
     pcall(function()
-        Lighting.GlobalShadows   = false
-        Lighting.Brightness      = 1
-        Lighting.Ambient         = Color3.fromRGB(128, 128, 128)
-        Lighting.OutdoorAmbient  = Color3.fromRGB(128, 128, 128)
-        Lighting.FogEnd          = 100000
+        Lighting.GlobalShadows  = false
+        Lighting.Brightness     = 1
+        Lighting.Ambient        = Color3.fromRGB(128, 128, 128)
+        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+        Lighting.FogEnd         = 100000
         for _, e in ipairs(Lighting:GetChildren()) do
             if e:IsA("PostEffect") or e:IsA("Sky") then
                 pcall(function() e.Enabled = false end)
@@ -524,31 +345,22 @@ function EmsUI.EnableAntiLag()
             end
         end
     end)
-
-    -- Render quality
     pcall(function()
         if settings and settings().Rendering then
             settings().Rendering.QualityLevel        = Enum.QualityLevel.Level01
             settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
         end
     end)
-
-    -- Terrain simplification
     pcall(function()
         local t = workspace.Terrain
         t.WaterWaveSize     = 0
         t.WaterWaveSpeed    = 0
         t.WaterReflectance  = 0
         t.WaterTransparency = 1
-        if t.Decoration then t.Decoration = false end
     end)
-
-    -- Strip everything currently in workspace
     for _, obj in ipairs(workspace:GetDescendants()) do
         pcall(stripInstance, obj)
     end
-
-    -- Hook future additions
     if not EmsUI._antiLagHooked then
         EmsUI._antiLagHooked = true
         workspace.DescendantAdded:Connect(function(obj)
@@ -567,211 +379,148 @@ end
 pcall(EmsUI.EnableAntiLag)
 
 -- ═══════════════════════════════════════════════════════════════
--- SetText compatibility bridge
+-- IDLE HOVER — rise to Y = 952, hold, release when any task resumes
 -- ═══════════════════════════════════════════════════════════════
-local _pending = {key = nil, text = nil, dirty = false}
-function EmsUI.SetText(key, text)
-    _pending.key  = key
-    _pending.text = text
-    _pending.dirty = true
-end
+local function engageIdleHover()
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
 
-task.spawn(function()
-    while task.wait(0.05) do
-        if _pending.dirty then
-            local key, text = _pending.key, _pending.text
-            _pending.dirty = false
-            pcall(function()
-                if not text then return end
-                text = tostring(text):gsub("<[^>]->", "")
-                if key == "MainTextLabel" or key == "Task1"
-                    or key == "DebugLine" then
-                    -- Task1 = "MainTask : value" → strip the prefix for display
-                    local v = text:match("^MainTask%s*:%s*(.+)$") or text
-                    statusLbl.Text = "Status : " .. v
-                elseif key == "Task2" then
-                    local v = text:match("^SubTask%s*:%s*(.+)$") or text
-                    if v ~= "" and v ~= "—" and v ~= "Idle" then
-                        captionLbl.Text = v
-                    end
-                elseif key == "LiveTime" then
-                    uptimeTxt.Text = text
-                end
-            end)
-        end
+    if Spirit._idleBP and Spirit._idleBP.Parent == hrp then
+        Spirit._idleBP.Position = Vector3.new(hrp.Position.X,
+            EmsUI.Config.IdleHeight, hrp.Position.Z)
+        return
     end
-end)
+    if Spirit._idleBP then
+        pcall(function() Spirit._idleBP:Destroy() end)
+        Spirit._idleBP = nil
+    end
 
-function EmsUI.SetStatus(text)
-    if not text then return end
-    statusLbl.Text = "Status : " .. tostring(text):gsub("<[^>]->", "")
-end
-function EmsUI.SetSubStatus(text)
-    if text then captionLbl.Text = tostring(text) end
-end
-function EmsUI.SetRedeemStatus(_) end
-function EmsUI.Toggle() setHudVisible(not hudVisible) end
-
--- ═══════════════════════════════════════════════════════════════
--- SetStats — Beli / Fragment bars driven by next-melee target
--- ═══════════════════════════════════════════════════════════════
-local BELI_FALLBACK_TARGET = 10_000_000
-local FRAG_FALLBACK_TARGET = 5_000
-
-function EmsUI.SetStats(data)
-    if not data then return end
-    pcall(function()
-        if data.Level then
-            levelTxt.Text = tostring(data.Level)
-        end
-        if data.Elapsed then
-            local h = math.floor(data.Elapsed / 3600)
-            local m = math.floor((data.Elapsed % 3600) / 60)
-            local s = math.floor(data.Elapsed % 60)
-            uptimeTxt.Text = string.format("%02d:%02d:%02d", h, m, s)
-        end
-        if data.Race then
-            captionLbl.Text = string.format("Level %s · Race %s",
-                tostring(data.Level or "—"), tostring(data.Race))
-        end
-    end)
+    local bp = Instance.new("BodyPosition")
+    bp.Name     = "EmsIdleHover"
+    bp.MaxForce = Vector3.new(1e4, 2e5, 1e4)
+    bp.P        = 8000
+    bp.D        = 400
+    bp.Position = Vector3.new(hrp.Position.X, EmsUI.Config.IdleHeight, hrp.Position.Z)
+    bp.Parent   = hrp
+    Spirit._idleBP = bp
 end
 
--- ═══════════════════════════════════════════════════════════════
--- Refresh loop — stats, bars, melee card
--- ═══════════════════════════════════════════════════════════════
+local function releaseIdleHover()
+    if Spirit._idleBP then
+        pcall(function() Spirit._idleBP:Destroy() end)
+        Spirit._idleBP = nil
+    end
+end
+
 task.spawn(function()
-    local start = os.time() - (Spirit.OldSessionTime or 0)
-    while task.wait(0.75) do
+    local idleStreak = 0
+    while task.wait(1) do
         pcall(function()
-            local Data = LocalPlayer:FindFirstChild("Data")
-            if not Data then return end
+            local task_ = ScriptStorage.Task or {}
+            local mainTask = task_.MainTask or ""
+            local transitioning = _G.SeaTransitionActive or _G.SkyTransitionActive
+                or _G.FruitPriorityActive
 
-            local level = Data:FindFirstChild("Level")
-                and tonumber(Data.Level.Value) or 0
-            local beli  = Data:FindFirstChild("Beli")
-                and tonumber(Data.Beli.Value) or 0
-            local frag  = Data:FindFirstChild("Fragments")
-                and tonumber(Data.Fragments.Value) or 0
+            local isIdle = (mainTask == "Idle") and not transitioning
+            if isIdle then idleStreak = idleStreak + 1 else idleStreak = 0 end
 
-            local raceName = "—"
-            local raceObj  = Data:FindFirstChild("Race")
-            if raceObj then
-                if raceObj:IsA("StringValue") then
-                    raceName = raceObj.Value
-                elseif raceObj:IsA("Folder") then
-                    local v = raceObj:FindFirstChild("Value")
-                    if v then raceName = v.Value end
-                end
-            end
-
-            -- Resolve targets from next-melee requirement (fallback to defaults)
-            local _, _, nextM = getMeleeState()
-            local beliTarget = BELI_FALLBACK_TARGET
-            local fragTarget = FRAG_FALLBACK_TARGET
-            if nextM then
-                local p = Spirit.MeleePrices and Spirit.MeleePrices[nextM.name]
-                if p and p.Price then
-                    if p.Price.Beli      then beliTarget = math.max(p.Price.Beli, 1) end
-                    if p.Price.Fragments then fragTarget = math.max(p.Price.Fragments, 1) end
-                end
-            end
-
-            -- Green bar — Beli
-            local beliRatio = math.clamp(beli / beliTarget, 0, 1)
-            beliFill.Size = UDim2.new(beliRatio, 0, 1, 0)
-            beliTxt.Text  = string.format("$%s / $%s",
-                shortNum(beli), shortNum(beliTarget))
-
-            -- Blue bar — Fragments
-            local fragRatio = math.clamp(frag / fragTarget, 0, 1)
-            fragFill.Size = UDim2.new(fragRatio, 0, 1, 0)
-            fragTxt.Text  = string.format("%s / %s frag",
-                shortNum(frag), shortNum(fragTarget))
-
-            -- Caption
-            captionLbl.Text = string.format("Level %d · Race %s",
-                level, tostring(raceName))
-
-            -- Uptime
-            local elapsed = os.time() - start
-            local h = math.floor(elapsed / 3600)
-            local m = math.floor((elapsed % 3600) / 60)
-            local s = math.floor(elapsed % 60)
-            uptimeTxt.Text = string.format("%02d:%02d:%02d", h, m, s)
-
-            -- ── Melee card ──────────────────────────────────
-            local current, _, nextMelee = getMeleeState()
-            local owned = ScriptStorage.Melees or {}
-
-            if current then
-                local m = owned[current.name]
-                if m then
-                    -- Owned — show mastery progress
-                    local ratio = math.clamp(m / current.target, 0, 1)
-                    curBarFill.Size = UDim2.new(ratio, 0, 1, 0)
-                    curBarTxt.Text  = string.format("%s   %d / %d",
-                        current.name, m, current.target)
-                    curName.Text = "Current · " .. current.name
-                    curName.TextColor3 = C.text
-                else
-                    -- Not owned yet — this is a buy target
-                    curBarFill.Size = UDim2.new(0, 0, 1, 0)
-                    curBarTxt.Text  = "Not owned — " .. current.name
-                    curName.Text = "Current · " .. current.name .. "  (buy)"
-                    curName.TextColor3 = C.gold
-                end
+            if idleStreak >= 2 then
+                engageIdleHover()
             else
-                curBarFill.Size = UDim2.new(1, 0, 1, 0)
-                curBarTxt.Text  = "All melees complete"
-                curName.Text    = "Current · —"
-                curName.TextColor3 = C.ok
-            end
-
-            if nextMelee then
-                nextName.Text = "Next · " .. nextMelee.name
-                nextReq.Text  = meleeReqString(nextMelee.name)
-
-                local p = Spirit.MeleePrices and Spirit.MeleePrices[nextMelee.name]
-                if p and p.Price then
-                    local needBeli = (p.Price.Beli or 0)
-                    local needFrag = (p.Price.Fragments or 0)
-                    local okBeli   = beli >= needBeli
-                    local okFrag   = frag >= needFrag
-                    local lvlReq   = (Spirit.BossesOrderLevel and 0) or 0
-
-                    if okBeli and okFrag then
-                        reqStatus.Text = "✔ requirements met — buyable"
-                        reqStatus.TextColor3 = C.ok
-                    else
-                        local missing = {}
-                        if not okBeli and needBeli > 0 then
-                            table.insert(missing, "$" .. shortNum(needBeli - beli))
-                        end
-                        if not okFrag and needFrag > 0 then
-                            table.insert(missing, shortNum(needFrag - frag) .. " frag")
-                        end
-                        reqStatus.Text = "✘ missing " .. table.concat(missing, " · ")
-                        reqStatus.TextColor3 = C.red
-                    end
-                else
-                    reqStatus.Text = ""
-                end
-            else
-                nextName.Text = "Next · —"
-                nextReq.Text  = "no further melee in order"
-                reqStatus.Text = ""
+                releaseIdleHover()
             end
         end)
     end
 end)
 
+LocalPlayer.CharacterAdded:Connect(function()
+    Spirit._idleBP = nil
+end)
+
 -- ═══════════════════════════════════════════════════════════════
--- Compatibility shims for the old panel-based API
+-- SetText bridge — Task1 → status, Task2 → ignored (no sub row)
 -- ═══════════════════════════════════════════════════════════════
-EmsUI.BeliLabel = {Text = ""}
-EmsUI.FragLabel = {Text = ""}
-EmsUI.RaceLabel = {Text = ""}
+function EmsUI.SetText(key, text)
+    pcall(function()
+        if not text then return end
+        text = tostring(text):gsub("<[^>]->", "")
+        if key == "MainTextLabel" or key == "Task1" or key == "DebugLine" then
+            local v = text:match("^MainTask%s*:%s*(.+)$") or text
+            statusLbl.Text = "Status : " .. v
+        elseif key == "LiveTime" then
+            -- long-form is handled by the tick loop, not here
+        end
+    end)
+end
+
+function EmsUI.SetStatus(text)
+    if not text then return end
+    statusLbl.Text = "Status : " .. tostring(text):gsub("<[^>]->", "")
+end
+function EmsUI.SetSubStatus(_) end
+function EmsUI.SetRedeemStatus(text)
+    if not text then return end
+    footerLbl.Text = tostring(text)
+end
+function EmsUI.Toggle() setPanelVisible(not panelVisible) end
+
+function EmsUI.SetStats(_) end -- handled by the loop below
+
+-- ═══════════════════════════════════════════════════════════════
+-- Refresh loop
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    local start = os.time() - (Spirit.OldSessionTime or 0)
+    while task.wait(0.5) do
+        pcall(function()
+            local Data = LocalPlayer:FindFirstChild("Data")
+            if Data then
+                local level = Data:FindFirstChild("Level")
+                    and tonumber(Data.Level.Value) or 0
+                local beli  = Data:FindFirstChild("Beli")
+                    and tonumber(Data.Beli.Value) or 0
+                local frag  = Data:FindFirstChild("Fragments")
+                    and tonumber(Data.Fragments.Value) or 0
+
+                local raceName = "—"
+                local raceObj  = Data:FindFirstChild("Race")
+                if raceObj then
+                    if raceObj:IsA("StringValue") then
+                        raceName = raceObj.Value
+                    elseif raceObj:IsA("Folder") then
+                        local v = raceObj:FindFirstChild("Value")
+                        if v then raceName = v.Value end
+                    end
+                end
+
+                levelLbl.Text = string.format("Level: %d", level)
+                beliLbl.Text  = string.format("Beli: %s", shortNum(beli))
+                fragLbl.Text  = string.format("Fragment: %s", shortNum(frag))
+                raceLbl.Text  = string.format("Race: %s", tostring(raceName))
+            end
+
+            -- Long-form uptime
+            local elapsed = os.time() - start
+            local h = math.floor(elapsed / 3600)
+            local m = math.floor((elapsed % 3600) / 60)
+            local s = math.floor(elapsed % 60)
+            timerLbl.Text = string.format("%d Hours, %d Minutes, %d Seconds", h, m, s)
+            uptimeLbl.Text = string.format("session %02d:%02d:%02d", h, m, s)
+
+            -- Melee line
+            meleeLbl.Text = "Melee: " .. currentMeleeString()
+
+            -- Codes redeemed count
+            local redeemed = Spirit.Storage and Spirit.Storage:Get("RedeemedCodes") or {}
+            local count = 0
+            if type(redeemed) == "table" then
+                for _ in pairs(redeemed) do count = count + 1 end
+            end
+            footerLbl.Text = string.format("%d Codes Redeemed", count)
+        end)
+    end
+end)
 
 _G.EmsUI = EmsUI
 getgenv().EmsUI = EmsUI
