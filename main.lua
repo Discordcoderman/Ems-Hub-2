@@ -93,8 +93,7 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- FPS BOOST — kept as an optional pass; EmsUI.EnableAntiLag()
--- already runs a permanent strip pass in ui.lua
+-- FPS BOOST
 -- ═══════════════════════════════════════════════════════════════
 local GRAYABLE = {
     BasePart = true, MeshPart = true, UnionOperation = true,
@@ -168,11 +167,14 @@ end)
 pcall(function() Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO REDEEM — per-code tracking, 10x faster
+-- AUTO REDEEM — ONE-SHOT
 --
--- First boot: fires every not-yet-redeemed code at 0.15s intervals,
--- marks each one on completion. Subsequent boots skip anything in
--- Storage.RedeemedCodes in under a millisecond.
+-- Two-layer skip:
+--   · RedeemCompleted_v3 = true → whole block skipped on sight
+--   · per-code table           → any code seen before is not re-fired
+--
+-- After the first successful pass, the master flag is set and the
+-- block never enters again. Re-triggering only if the flag is wiped.
 -- ═══════════════════════════════════════════════════════════════
 local REDEEM_CODES = {
     "SUB2GAMERROBOT_RESET1", "KITT_RESET",
@@ -188,50 +190,68 @@ local REDEEM_CODES = {
 repeat task.wait(0.25) until Spirit.Storage
 repeat task.wait(0.25) until ScriptStorage.PlayerData.Level ~= nil
 
-local redeemed = Spirit.Storage:Get("RedeemedCodes")
-if type(redeemed) ~= "table" then redeemed = {} end
+local redeemDone = Spirit.Storage:Get("RedeemCompleted_v3") == true
 
-local levelBlocked = (ScriptStorage.PlayerData.Level or 0) >= Spirit.MaxLevel
+if not redeemDone then
+    local redeemed = Spirit.Storage:Get("RedeemedCodes")
+    if type(redeemed) ~= "table" then redeemed = {} end
 
-if not levelBlocked then
-    SetText("MainTextLabel", "Redeeming codes…")
+    local levelBlocked = (ScriptStorage.PlayerData.Level or 0) >= Spirit.MaxLevel
 
-    local RemotesRS = ReplicatedStorage:WaitForChild("Remotes", 30)
-    local redeem, commF
-    if RemotesRS then
-        redeem = RemotesRS:FindFirstChild("Redeem")
-              or RemotesRS:WaitForChild("Redeem", 15)
-        commF  = RemotesRS:FindFirstChild("CommF_")
+    -- Preflight — if every code is already marked, just flip the master
+    -- flag and skip without touching the remote at all.
+    local allMarked = true
+    for _, code in ipairs(REDEEM_CODES) do
+        if not redeemed[code] then allMarked = false; break end
     end
 
-    if redeem or commF then
-        local sent, skipped, failed = 0, 0, 0
-        for i, code in ipairs(REDEEM_CODES) do
-            if redeemed[code] then
-                skipped = skipped + 1
-            else
-                SetText("MainTextLabel",
-                    string.format("Redeeming codes… %d/%d  %s", i, #REDEEM_CODES, code))
-                local ok = pcall(function()
-                    if redeem then
-                        redeem:InvokeServer(code)
-                    else
-                        commF:InvokeServer("Redeem", code)
-                    end
-                end)
-                if ok then sent = sent + 1 else failed = failed + 1 end
-                redeemed[code] = true
-                task.wait(0.15)
-            end
-        end
-        Spirit.Storage:Set("RedeemedCodes", redeemed)
+    if allMarked or levelBlocked then
+        Spirit.Storage:Set("RedeemCompleted_v3", true)
         Spirit.Storage:Save()
-        warn(string.format(
-            "[main] Redeem — %d sent, %d skipped (already redeemed), %d failed",
-            sent, skipped, failed))
+        warn("[main] Redeem — master skip (all codes already marked or max level)")
     else
-        warn("[main] No Redeem remote — skipping redeem")
+        SetText("MainTextLabel", "Redeeming codes…")
+
+        local RemotesRS = ReplicatedStorage:WaitForChild("Remotes", 30)
+        local redeem, commF
+        if RemotesRS then
+            redeem = RemotesRS:FindFirstChild("Redeem")
+                  or RemotesRS:WaitForChild("Redeem", 15)
+            commF  = RemotesRS:FindFirstChild("CommF_")
+        end
+
+        if redeem or commF then
+            local sent, skipped, failed = 0, 0, 0
+            for i, code in ipairs(REDEEM_CODES) do
+                if redeemed[code] then
+                    skipped = skipped + 1
+                else
+                    SetText("MainTextLabel",
+                        string.format("Redeeming codes… %d/%d  %s", i, #REDEEM_CODES, code))
+                    local ok = pcall(function()
+                        if redeem then
+                            redeem:InvokeServer(code)
+                        else
+                            commF:InvokeServer("Redeem", code)
+                        end
+                    end)
+                    if ok then sent = sent + 1 else failed = failed + 1 end
+                    redeemed[code] = true
+                    task.wait(0.15)
+                end
+            end
+            Spirit.Storage:Set("RedeemedCodes", redeemed)
+            Spirit.Storage:Set("RedeemCompleted_v3", true)
+            Spirit.Storage:Save()
+            warn(string.format(
+                "[main] Redeem — %d sent, %d skipped, %d failed. Master flag set.",
+                sent, skipped, failed))
+        else
+            warn("[main] No Redeem remote — skipping redeem (flag NOT set, will retry next session)")
+        end
     end
+else
+    warn("[main] Redeem — already completed (RedeemCompleted_v3 = true). Skipping.")
 end
 
 SetText("MainTextLabel", "Loaded — waiting for player data...")
