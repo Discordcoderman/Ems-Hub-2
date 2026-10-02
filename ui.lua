@@ -1,9 +1,4 @@
--- ui.lua — Bacon Hub style compact HUD
---   · top-center: brand, status, long-form timer, stat rows, melee
---   · bottom-left: MENU toggle + level circle
---   · idle hover: when MainTask == "Idle" for 2s, character rises to
---     Y = 952 and holds — releases the moment any task resumes
---   · API compat: SetText / SetStats / SetStatus / Toggle / Panel
+-- ui.lua — compact HUD, big E toggle, idle hover at Y = 952
 local Spirit = getgenv().Spirit
 if not Spirit then error("[ui] core.lua not loaded") end
 
@@ -78,6 +73,40 @@ gui.IgnoreGuiInset = true
 EmsUI.ScreenGui = gui
 
 -- ═══════════════════════════════════════════════════════════════
+-- BIG E TOGGLE — top-left, circular
+-- ═══════════════════════════════════════════════════════════════
+local eBtn = Instance.new("TextButton")
+eBtn.Name              = "EmsEButton"
+eBtn.Parent            = gui
+eBtn.AnchorPoint       = Vector2.new(0, 0)
+eBtn.Position          = UDim2.new(0, 20, 0, 20)
+eBtn.Size              = UDim2.new(0, 56, 0, 56)
+eBtn.BackgroundColor3  = C.bg
+eBtn.Text              = "E"
+eBtn.Font              = FONT_BRAND
+eBtn.TextSize          = 30
+eBtn.TextColor3        = C.brandHot
+eBtn.BorderSizePixel   = 0
+eBtn.AutoButtonColor   = false
+eBtn.Active            = true
+eBtn.Draggable         = true
+eBtn.ZIndex            = 50
+corner(eBtn, 28)
+local eStroke = Instance.new("UIStroke", eBtn)
+eStroke.Color     = C.brand
+eStroke.Thickness = 2
+eStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+eBtn.MouseEnter:Connect(function()
+    eBtn.BackgroundColor3 = C.panel
+    eBtn.TextColor3 = C.text
+end)
+eBtn.MouseLeave:Connect(function()
+    eBtn.BackgroundColor3 = C.bg
+    eBtn.TextColor3 = C.brandHot
+end)
+
+-- ═══════════════════════════════════════════════════════════════
 -- MAIN PANEL — centered stack
 -- ═══════════════════════════════════════════════════════════════
 local panel = Instance.new("Frame")
@@ -95,7 +124,6 @@ corner(panel, 8)
 stroke(panel, C.line)
 EmsUI.Panel = panel
 
--- ── Brand title (two-line, like the screenshot) ───────────────
 local brandTop = Instance.new("TextLabel")
 brandTop.Parent = panel
 brandTop.BackgroundTransparency = 1
@@ -122,7 +150,6 @@ brandBot.TextXAlignment = Enum.TextXAlignment.Center
 brandBot.TextStrokeTransparency = 0.6
 brandBot.TextStrokeColor3 = C.shadow
 
--- ── Status ────────────────────────────────────────────────────
 local statusLbl = Instance.new("TextLabel")
 statusLbl.Parent = panel
 statusLbl.BackgroundTransparency = 1
@@ -136,7 +163,6 @@ statusLbl.TextXAlignment = Enum.TextXAlignment.Center
 statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
 EmsUI.StatusLabel = statusLbl
 
--- ── Long-form timer ───────────────────────────────────────────
 local timerLbl = Instance.new("TextLabel")
 timerLbl.Parent = panel
 timerLbl.BackgroundTransparency = 1
@@ -149,7 +175,6 @@ timerLbl.TextColor3 = C.textDim
 timerLbl.TextXAlignment = Enum.TextXAlignment.Center
 EmsUI.TimerLabel = timerLbl
 
--- ── Level / Beli row ─────────────────────────────────────────
 local levelBeliRow = Instance.new("Frame")
 levelBeliRow.Parent = panel
 levelBeliRow.Position = UDim2.new(0, 12, 0, 118)
@@ -180,7 +205,6 @@ beliLbl.TextColor3 = C.text
 beliLbl.TextXAlignment = Enum.TextXAlignment.Right
 EmsUI.BeliLabel = beliLbl
 
--- ── Fragment / Race row ──────────────────────────────────────
 local fragRaceRow = Instance.new("Frame")
 fragRaceRow.Parent = panel
 fragRaceRow.Position = UDim2.new(0, 12, 0, 142)
@@ -211,7 +235,6 @@ raceLbl.TextColor3 = C.blue
 raceLbl.TextXAlignment = Enum.TextXAlignment.Right
 EmsUI.RaceLabel = raceLbl
 
--- ── Melee line ───────────────────────────────────────────────
 local meleeLbl = Instance.new("TextLabel")
 meleeLbl.Parent = panel
 meleeLbl.BackgroundTransparency = 1
@@ -225,7 +248,14 @@ meleeLbl.TextXAlignment = Enum.TextXAlignment.Center
 meleeLbl.TextTruncate = Enum.TextTruncate.AtEnd
 EmsUI.MeleeLabel = meleeLbl
 
--- ── Footer — codes redeemed ──────────────────────────────────
+local div = Instance.new("Frame")
+div.Parent = panel
+div.Position = UDim2.new(0, 20, 0, 196)
+div.Size = UDim2.new(1, -40, 0, 1)
+div.BackgroundColor3 = C.line
+div.BackgroundTransparency = 0.4
+div.BorderSizePixel = 0
+
 local footerLbl = Instance.new("TextLabel")
 footerLbl.Parent = panel
 footerLbl.BackgroundTransparency = 1
@@ -238,16 +268,6 @@ footerLbl.TextColor3 = C.green
 footerLbl.TextXAlignment = Enum.TextXAlignment.Center
 EmsUI.FooterLabel = footerLbl
 
--- ── Thin divider above footer ────────────────────────────────
-local div = Instance.new("Frame")
-div.Parent = panel
-div.Position = UDim2.new(0, 20, 0, 196)
-div.Size = UDim2.new(1, -40, 0, 1)
-div.BackgroundColor3 = C.line
-div.BackgroundTransparency = 0.4
-div.BorderSizePixel = 0
-
--- ── Bottom hint / uptime pill ────────────────────────────────
 local uptimeLbl = Instance.new("TextLabel")
 uptimeLbl.Parent = panel
 uptimeLbl.BackgroundTransparency = 1
@@ -260,9 +280,7 @@ uptimeLbl.TextColor3 = C.textFaint
 uptimeLbl.TextXAlignment = Enum.TextXAlignment.Center
 EmsUI.SessionLabel = uptimeLbl
 
--- ═══════════════════════════════════════════════════════════════
--- BOTTOM-LEFT — MENU toggle
--- ═══════════════════════════════════════════════════════════════
+-- ── Bottom-left secondary MENU button ─────────────────────────
 local menuBtn = Instance.new("TextButton")
 menuBtn.Name = "EmsFloat"
 menuBtn.Parent = gui
@@ -285,11 +303,10 @@ local function setPanelVisible(v)
     panelVisible = v
     panel.Visible = v
 end
+eBtn.MouseButton1Click:Connect(function() setPanelVisible(not panelVisible) end)
 menuBtn.MouseButton1Click:Connect(function() setPanelVisible(not panelVisible) end)
 
--- ═══════════════════════════════════════════════════════════════
--- MELEE STATE — current training target
--- ═══════════════════════════════════════════════════════════════
+-- ── Melee tracker string ──────────────────────────────────────
 local function currentMeleeString()
     local order = Spirit.MASTERY_TRAIN_ORDER or {}
     local owned = ScriptStorage.Melees or {}
@@ -307,9 +324,7 @@ local function currentMeleeString()
     return "all melees complete"
 end
 
--- ═══════════════════════════════════════════════════════════════
--- ANTI-LAG
--- ═══════════════════════════════════════════════════════════════
+-- ── Anti-lag ──────────────────────────────────────────────────
 local function stripInstance(obj)
     if not obj or not obj.Parent then return end
     if obj:IsA("BasePart") then
@@ -375,27 +390,18 @@ function EmsUI.EnableAntiLag()
         end)
     end
 end
-
 pcall(EmsUI.EnableAntiLag)
 
--- ═══════════════════════════════════════════════════════════════
--- IDLE HOVER — rise to Y = 952, hold, release when any task resumes
--- ═══════════════════════════════════════════════════════════════
+-- ── Idle hover at Y = 952 ────────────────────────────────────
 local function engageIdleHover()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-
     if Spirit._idleBP and Spirit._idleBP.Parent == hrp then
-        Spirit._idleBP.Position = Vector3.new(hrp.Position.X,
-            EmsUI.Config.IdleHeight, hrp.Position.Z)
+        Spirit._idleBP.Position = Vector3.new(hrp.Position.X, EmsUI.Config.IdleHeight, hrp.Position.Z)
         return
     end
-    if Spirit._idleBP then
-        pcall(function() Spirit._idleBP:Destroy() end)
-        Spirit._idleBP = nil
-    end
-
+    if Spirit._idleBP then pcall(function() Spirit._idleBP:Destroy() end); Spirit._idleBP = nil end
     local bp = Instance.new("BodyPosition")
     bp.Name     = "EmsIdleHover"
     bp.MaxForce = Vector3.new(1e4, 2e5, 1e4)
@@ -405,12 +411,8 @@ local function engageIdleHover()
     bp.Parent   = hrp
     Spirit._idleBP = bp
 end
-
 local function releaseIdleHover()
-    if Spirit._idleBP then
-        pcall(function() Spirit._idleBP:Destroy() end)
-        Spirit._idleBP = nil
-    end
+    if Spirit._idleBP then pcall(function() Spirit._idleBP:Destroy() end); Spirit._idleBP = nil end
 end
 
 task.spawn(function()
@@ -419,28 +421,16 @@ task.spawn(function()
         pcall(function()
             local task_ = ScriptStorage.Task or {}
             local mainTask = task_.MainTask or ""
-            local transitioning = _G.SeaTransitionActive or _G.SkyTransitionActive
-                or _G.FruitPriorityActive
-
+            local transitioning = _G.SeaTransitionActive or _G.SkyTransitionActive or _G.FruitPriorityActive
             local isIdle = (mainTask == "Idle") and not transitioning
             if isIdle then idleStreak = idleStreak + 1 else idleStreak = 0 end
-
-            if idleStreak >= 2 then
-                engageIdleHover()
-            else
-                releaseIdleHover()
-            end
+            if idleStreak >= 2 then engageIdleHover() else releaseIdleHover() end
         end)
     end
 end)
+LocalPlayer.CharacterAdded:Connect(function() Spirit._idleBP = nil end)
 
-LocalPlayer.CharacterAdded:Connect(function()
-    Spirit._idleBP = nil
-end)
-
--- ═══════════════════════════════════════════════════════════════
--- SetText bridge — Task1 → status, Task2 → ignored (no sub row)
--- ═══════════════════════════════════════════════════════════════
+-- ── SetText bridge ───────────────────────────────────────────
 function EmsUI.SetText(key, text)
     pcall(function()
         if not text then return end
@@ -448,12 +438,9 @@ function EmsUI.SetText(key, text)
         if key == "MainTextLabel" or key == "Task1" or key == "DebugLine" then
             local v = text:match("^MainTask%s*:%s*(.+)$") or text
             statusLbl.Text = "Status : " .. v
-        elseif key == "LiveTime" then
-            -- long-form is handled by the tick loop, not here
         end
     end)
 end
-
 function EmsUI.SetStatus(text)
     if not text then return end
     statusLbl.Text = "Status : " .. tostring(text):gsub("<[^>]->", "")
@@ -464,59 +451,42 @@ function EmsUI.SetRedeemStatus(text)
     footerLbl.Text = tostring(text)
 end
 function EmsUI.Toggle() setPanelVisible(not panelVisible) end
+function EmsUI.SetStats(_) end
 
-function EmsUI.SetStats(_) end -- handled by the loop below
-
--- ═══════════════════════════════════════════════════════════════
--- Refresh loop
--- ═══════════════════════════════════════════════════════════════
+-- ── Refresh loop ─────────────────────────────────────────────
 task.spawn(function()
     local start = os.time() - (Spirit.OldSessionTime or 0)
     while task.wait(0.5) do
         pcall(function()
             local Data = LocalPlayer:FindFirstChild("Data")
             if Data then
-                local level = Data:FindFirstChild("Level")
-                    and tonumber(Data.Level.Value) or 0
-                local beli  = Data:FindFirstChild("Beli")
-                    and tonumber(Data.Beli.Value) or 0
-                local frag  = Data:FindFirstChild("Fragments")
-                    and tonumber(Data.Fragments.Value) or 0
-
+                local level = Data:FindFirstChild("Level") and tonumber(Data.Level.Value) or 0
+                local beli  = Data:FindFirstChild("Beli")  and tonumber(Data.Beli.Value)  or 0
+                local frag  = Data:FindFirstChild("Fragments") and tonumber(Data.Fragments.Value) or 0
                 local raceName = "—"
                 local raceObj  = Data:FindFirstChild("Race")
                 if raceObj then
-                    if raceObj:IsA("StringValue") then
-                        raceName = raceObj.Value
+                    if raceObj:IsA("StringValue") then raceName = raceObj.Value
                     elseif raceObj:IsA("Folder") then
                         local v = raceObj:FindFirstChild("Value")
                         if v then raceName = v.Value end
                     end
                 end
-
                 levelLbl.Text = string.format("Level: %d", level)
                 beliLbl.Text  = string.format("Beli: %s", shortNum(beli))
                 fragLbl.Text  = string.format("Fragment: %s", shortNum(frag))
                 raceLbl.Text  = string.format("Race: %s", tostring(raceName))
             end
-
-            -- Long-form uptime
             local elapsed = os.time() - start
             local h = math.floor(elapsed / 3600)
             local m = math.floor((elapsed % 3600) / 60)
             local s = math.floor(elapsed % 60)
-            timerLbl.Text = string.format("%d Hours, %d Minutes, %d Seconds", h, m, s)
+            timerLbl.Text  = string.format("%d Hours, %d Minutes, %d Seconds", h, m, s)
             uptimeLbl.Text = string.format("session %02d:%02d:%02d", h, m, s)
-
-            -- Melee line
-            meleeLbl.Text = "Melee: " .. currentMeleeString()
-
-            -- Codes redeemed count
+            meleeLbl.Text  = "Melee: " .. currentMeleeString()
             local redeemed = Spirit.Storage and Spirit.Storage:Get("RedeemedCodes") or {}
             local count = 0
-            if type(redeemed) == "table" then
-                for _ in pairs(redeemed) do count = count + 1 end
-            end
+            if type(redeemed) == "table" then for _ in pairs(redeemed) do count = count + 1 end end
             footerLbl.Text = string.format("%d Codes Redeemed", count)
         end)
     end
