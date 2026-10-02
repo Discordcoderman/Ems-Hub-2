@@ -1,404 +1,520 @@
--- mele.lua — MeleesController: purchase chain, key farming, raid watcher
---
--- Key-gated melees (Death Step → Library Key, Sharkman Karate → Water
--- Key) drive their own boss-farm loop. Flow:
---   1. Travel to sea the boss lives in
---   2. Wait for spawn (60s) or hop
---   3. Kill boss, check for key
---   4. Key drops → tween to teacher → buy
---   5. No drop after 4 kills → hop, retry
+-- combat.lua — CombatController, BringMobs (Dwac pattern), fast-attack
 local Spirit = getgenv().Spirit
-if not Spirit then error("[mele] core.lua not loaded") end
-if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
+if not Spirit then error("[combat] core.lua not loaded") end
+if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
 
-local ReplicatedStorage = Spirit.Services.ReplicatedStorage
+local Services          = Spirit.Services
+local Workspace         = Services.Workspace
+local ReplicatedStorage = Services.ReplicatedStorage
+local LocalPlayer       = Spirit.LocalPlayer
 local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
-local LocalPlayer       = Spirit.LocalPlayer
-local SetTask           = Spirit.SetTask
-local CheckItem         = Spirit.CheckItem
+local Players           = Services.Players
 
--- Library Key:  Awakened Ice Admiral (Sea 2)
--- Water Key:    Tide Keeper           (Sea 2)
-local KEY_SOURCES = {
-    ["Library Key"] = {boss = "Awakened Ice Admiral", seaIndex = 2},
-    ["Water Key"]   = {boss = "Tide Keeper",           seaIndex = 2},
-}
-
-local TRAIN_SEQUENCE = {
-    {name = "Black Leg",       target = 400},
-    {name = "Electro",         target = 400},
-    {name = "Fishman Karate",  target = 400},
-    {name = "Dragon Claw",     target = 400},
-    {name = "Superhuman",      target = 400},
-    {name = "Death Step",      target = 400},
-    {name = "Sharkman Karate", target = 400},
-    {name = "Electric Claw",   target = 400},
-    {name = "Dragon Talon",    target = 400},
-}
-
-local BUY_SEQUENCE = {
-    { name = "Black Leg",       key = "BlackLeg",
-      price = {Beli = 150000} },
-
-    { name = "Electro",         key = "Electro",
-      price = {Beli = 500000},
-      needMastery = {{"Black Leg", 400}} },
-
-    { name = "Fishman Karate",  key = "FishmanKarate",
-      price = {Beli = 750000},
-      needMastery = {{"Electro", 400}} },
-
-    { name = "Dragon Claw",     key = "DragonClaw",
-      price = {Fragments = 1500},
-      needMastery = {{"Fishman Karate", 400}},
-      needRaids = 3 },
-
-    { name = "Superhuman",      key = "Superhuman",
-      price = {Beli = 3000000},
-      needMastery = {{"Black Leg", 400}, {"Electro", 400}, {"Fishman Karate", 400}} },
-
-    { name = "Death Step",      key = "DeathStep",
-      price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Black Leg", 400}},
-      needKey = "Library Key" },
-
-    { name = "Sharkman Karate", key = "SharkmanKarate",
-      price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Fishman Karate", 400}},
-      needKey = "Water Key" },
-
-    { name = "Electric Claw",   key = "ElectricClaw",
-      price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Electro", 400}} },
-
-    { name = "Dragon Talon",    key = "DragonTalon",
-      price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Dragon Claw", 400}},
-      needFireEssence = true },
-
-    { name = "Godhuman",        key = "Godhuman",
-      price = {Beli = 5000000, Fragments = 5000},
-      needMastery = {{"Superhuman", 400}, {"Death Step", 400},
-                     {"Sharkman Karate", 400}, {"Electric Claw", 400},
-                     {"Dragon Talon", 400}},
-      needMaterials = true },
-}
-
-local GODHUMAN_MATERIALS = {
-    {"Dragon Scale",   10},
-    {"Fish Tail",      20},
-    {"Mystic Droplet", 10},
-    {"Magma Ore",      20},
-}
-
-local mele = {currentTrainName = nil, currentTrainIdx = nil, lastMasteryCheck = 0}
-Spirit.MeleeState = mele
-
-local keyFarmState = {
-    sessionStart = 0,
-    retries      = 0,
-}
-
-local function masteryOf(name) return ScriptStorage.Melees[name] or 0 end
-
-local function hasKeyItem(keyName)
-    local bp   = LocalPlayer:FindFirstChild("Backpack")
-    local char = LocalPlayer.Character
-    if bp and bp:FindFirstChild(keyName) then return true end
-    if char and char:FindFirstChild(keyName) then return true end
-    if ScriptStorage.Backpack and ScriptStorage.Backpack[keyName] then return true end
+local function CheckItem(itemName)
+    if not itemName then return false end
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, v in ipairs(bp:GetChildren()) do
+            if v:IsA("Tool") and (v.Name == itemName or string.find(v.Name, itemName, 1, true)) then
+                return v
+            end
+        end
+    end
+    local char = Spirit.Character
+    if char then
+        for _, v in ipairs(char:GetChildren()) do
+            if v:IsA("Tool") and (v.Name == itemName or string.find(v.Name, itemName, 1, true)) then
+                return v
+            end
+        end
+    end
     return false
 end
+Spirit.CheckItem = CheckItem
 
-local function findTrainingMelee()
-    local lastOwned
-    for i, entry in ipairs(TRAIN_SEQUENCE) do
-        if CheckItem(entry.name) then
-            lastOwned = {name = entry.name, idx = i}
-            if masteryOf(entry.name) < entry.target then
-                return entry.name, i, entry.target
+-- ═══════════════════════════════════════════════════════════════
+-- NETWORK OWNERSHIP
+-- ═══════════════════════════════════════════════════════════════
+if not isnetworkowner then
+    isnetworkowner = function(part)
+        if not part or not part.Parent then return false end
+        if part.Anchored then return false end
+        return true
+    end
+end
+
+local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
+local RE_RegisterAttack = Net:WaitForChild("RE/RegisterAttack")
+local RE_RegisterHit    = Net:WaitForChild("RE/RegisterHit")
+
+local function GetAllBladeHits()
+    local hits = {}
+    local hrp = Spirit.HumanoidRootPart
+    if not hrp then return hits end
+    for _, e in ipairs(Workspace.Enemies:GetChildren()) do
+        if e:FindFirstChild("Humanoid")
+           and e:FindFirstChild("HumanoidRootPart")
+           and e.Humanoid.Health > 0
+           and (e.HumanoidRootPart.Position - hrp.Position).Magnitude <= 65 then
+            table.insert(hits, e)
+        end
+    end
+    return hits
+end
+
+local function Getplayerhit()
+    local hits = {}
+    local hrp = Spirit.HumanoidRootPart
+    if not hrp then return hits end
+    local chars = Workspace:FindFirstChild("Characters")
+    if not chars then return hits end
+    for _, e in ipairs(chars:GetChildren()) do
+        if e.Name ~= LocalPlayer.Name
+           and e:FindFirstChild("Humanoid")
+           and e:FindFirstChild("HumanoidRootPart")
+           and e.Humanoid.Health > 0
+           and (e.HumanoidRootPart.Position - hrp.Position).Magnitude <= 65 then
+            table.insert(hits, e)
+        end
+    end
+    return hits
+end
+
+local FastAttack = {}
+function FastAttack:Attack()
+    local targets = {}
+    for _, v in ipairs(GetAllBladeHits()) do table.insert(targets, v) end
+    for _, v in ipairs(Getplayerhit())   do table.insert(targets, v) end
+    if #targets == 0 then return end
+
+    local payload = {[1] = nil, [2] = {}, [4] = "078da5141"}
+    for _, target in ipairs(targets) do
+        RE_RegisterAttack:FireServer(0)
+        if not payload[1] then
+            payload[1] = target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
+        end
+        table.insert(payload[2], {[1] = target, [2] = target.HumanoidRootPart})
+        table.insert(payload[2], target)
+    end
+    RE_RegisterHit:FireServer(unpack(payload))
+end
+
+task.spawn(function()
+    while task.wait(0.06) do
+        if _G.FastAttack == os.time() then
+            pcall(function() FastAttack:Attack() end)
+        end
+    end
+end)
+
+local W_Attack = {}
+function W_Attack.Attack(_) pcall(function() _G.FastAttack = os.time() end) end
+Spirit.W_Attack = W_Attack
+Spirit.FastAttackReady = FastAttack
+
+local _aimLock = nil
+function Spirit.LockAimPositionTo(pos)
+    _aimLock = pos
+    task.delay(0.5, function() _aimLock = nil end)
+end
+
+local CombatController = {
+    GRAB = false,
+    GRAB_DISTANCE         = (Spirit.SeaIndex == 1) and 250 or 350,
+    MAX_ATTACK_DURATION   = 2,
+    MAX_ATTACK_DURATION_2 = 60,
+    LEVITATE_TIME         = 0,
+    CurrentIndex          = 1,
+}
+Spirit.CombatController = CombatController
+
+local LastFound    = os.time()
+local LastFire12   = 0
+local GrabDebounce = 0
+Spirit.LastFound   = LastFound
+
+local function Sort1(entity)
+    if not entity or not entity:FindFirstChild("HumanoidRootPart") then return math.huge end
+    return math.floor(Spirit.CaculateDistance(entity.HumanoidRootPart.CFrame))
+end
+
+function CombatController.Search(names)
+    local candidates = {}
+    local anyFound   = false
+    for _, entity in ipairs(Spirit.GetMonAsSortedRange()) do
+        if table.find(names, entity.Name)
+           and entity:FindFirstChild("Humanoid")
+           and entity.Humanoid.Health > 0 then
+            if (entity:GetAttribute("FailureCount") or 0) < 3 then
+                anyFound = true
+                table.insert(candidates, entity)
             end
         end
     end
-    if lastOwned then return lastOwned.name, lastOwned.idx end
-    return nil, nil, nil
-end
-
-local function findNextUnowned()
-    for _, entry in ipairs(BUY_SEQUENCE) do
-        if not CheckItem(entry.name) then return entry end
+    table.sort(candidates, function(a, b) return Sort1(a) < Sort1(b) end)
+    if anyFound and candidates[1] then return candidates[1] end
+    for _, npcName in ipairs(names) do
+        local npc = ReplicatedStorage:FindFirstChild(npcName)
+        if npc then return npc end
     end
-    return nil
 end
 
-local function raidsDoneFor(entry)
-    if not entry.needRaids then return 0 end
-    return _G.MeleeRaidsDone or 0
-end
+function CombatController.Grab(mobName)
+    pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
+    if not CombatController.GRAB then return end
+    if GrabDebounce == os.time() then return end
+    GrabDebounce = os.time()
+    local MonResult = Spirit.MonResult
+    if not MonResult or not MonResult:FindFirstChild("HumanoidRootPart") then return end
 
-local function onlyBlockedByKey(entry)
-    if not entry.needKey then return false end
-    if hasKeyItem(entry.needKey) then return false end
+    local targetPos = MonResult.HumanoidRootPart.Position
+    local AreaMob   = false
 
-    if entry.needMastery then
-        for _, req in ipairs(entry.needMastery) do
-            if not CheckItem(req[1]) then return false end
-            if masteryOf(req[1]) < req[2] then return false end
+    for _, enemy in ipairs(Workspace.Enemies:GetChildren()) do
+        if enemy ~= MonResult and enemy.Name == mobName then
+            local hum  = enemy:FindFirstChildOfClass("Humanoid")
+            local root = enemy:FindFirstChild("HumanoidRootPart")
+            if hum and root and hum.Health > 0 then
+                local dist = (root.Position - targetPos).Magnitude
+                if dist <= 3000 then
+                    local bv = root:FindFirstChild("FarmingVelocity")
+                    if not bv then
+                        bv = Instance.new("BodyVelocity")
+                        bv.Name     = "FarmingVelocity"
+                        bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                        bv.Velocity = Vector3.zero
+                        bv.Parent   = root
+                    end
+                    if dist <= 10 then AreaMob = true end
+                    if not AreaMob and (not isnetworkowner or pcall(isnetworkowner, root)) then
+                        root.CFrame = MonResult.HumanoidRootPart.CFrame
+                    end
+                    enemy:SetAttribute("IsGrabbed", true)
+                end
+            end
         end
     end
-    if entry.needFireEssence and not CheckItem("Fire Essence") then return false end
-    if entry.needMaterials then
-        for _, mat in ipairs(GODHUMAN_MATERIALS) do
-            local count = (ScriptStorage.Backpack[mat[1]] and ScriptStorage.Backpack[mat[1]].Count) or 0
-            if count < mat[2] then return false end
-        end
-    end
-    if entry.needRaids and raidsDoneFor(entry) < entry.needRaids then return false end
-
-    return true
 end
 
-local function HasStaticReqs(entry)
-    if entry.needMastery then
-        for _, req in ipairs(entry.needMastery) do
-            if not CheckItem(req[1]) then return false end
-            if masteryOf(req[1]) < req[2] then return false end
-        end
+local function EquipToolDynamic(toolName)
+    local FH = Spirit.FunctionsHandler
+    if FH and FH.LocalPlayerController and FH.LocalPlayerController.Methods
+       and FH.LocalPlayerController.Methods.EquipTool then
+        FH.LocalPlayerController.Methods.EquipTool:Call(toolName)
     end
-    if entry.needKey and not CheckItem(entry.needKey) then return false end
-    if entry.needFireEssence and not CheckItem("Fire Essence") then return false end
-    if entry.needMaterials then
-        for _, mat in ipairs(GODHUMAN_MATERIALS) do
-            local count = (ScriptStorage.Backpack[mat[1]] and ScriptStorage.Backpack[mat[1]].Count) or 0
-            if count < mat[2] then return false end
-        end
-    end
-    return true
+end
+Spirit.EquipToolDynamic = EquipToolDynamic
+
+local function SweetChaliceInCombat()
+    local tool = ScriptStorage.Tools["Sweet Chalice"]
+    if not tool then return false end
+    local ok, guide = pcall(function() return getsenv(ReplicatedStorage.GuideModule) end)
+    if not ok or not guide or not guide._G then return false end
+    return guide._G.InCombat and true or false
 end
 
-local function HasPrice(entry)
-    for cur, amount in pairs(entry.price or {}) do
-        local have = (cur == "Beli"      and (ScriptStorage.PlayerData.Beli or 0))
-                  or (cur == "Fragments" and (ScriptStorage.PlayerData.Fragments or 0))
-                  or 0
-        if have < amount then return false end
-    end
-    return true
-end
-
-local function GoToTeacher(meleeName)
-    local teacher = Spirit.MeleeTeacher[meleeName]
-    if not teacher then return true end
-    local locs = Spirit.TeacherLocations[teacher]
-    if not locs then return true end
-    local cf = locs[Spirit.SeaIndex]
-    if not cf then
-        if Spirit.SeaIndex == 1 then
-            Remotes.CommF_:InvokeServer("TravelDressrosa")
-        elseif Spirit.SeaIndex == 2 then
-            Remotes.CommF_:InvokeServer("TravelZou")
-        end
-        return false
-    end
-    if Spirit.CaculateDistance(cf) > 10 then
-        Spirit.TweenController.Create(cf)
-        return false
-    end
-    return true
-end
-
-local KEY_FARM_WAIT_SPAWN = 60
-local KEY_FARM_MAX_KILLS  = 4
-
-local function farmKeyAndBuy(action)
-    local entry   = action.entry
-    local keyName = action.key
-    local source  = KEY_SOURCES[keyName]
-
-    if not source then
-        SetTask("MainTask", "Auto Melee | No drop source for " .. keyName)
+function CombatController.Attack(names, forceNear, forceDist, callback)
+    if _G.FruitPriorityActive then return end
+    if _G.SkyTransitionActive then return end
+    if SweetChaliceInCombat() then
+        pcall(function() if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end end)
         return
     end
 
-    if hasKeyItem(keyName) then
-        if not GoToTeacher(entry.name) then
-            SetTask("MainTask", "Auto Melee | Moving to " .. entry.name .. " teacher")
+    pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
+    names = (type(names) == "string") and {names} or (names or {})
+
+    Spirit.BringNames = names
+    if #names >= 1 then
+        Spirit.Mon = names[1]
+    end
+
+    for _, rawName in ipairs(names) do
+        local nameStr = tostring(rawName)
+
+        if (nameStr == "Deandre" or nameStr == "Urban"
+            or (nameStr == "Diablo" and (os.time() - (LastFire12 or 0)) > 180)) then
+            LastFire12 = os.time()
+            Remotes.CommF_:InvokeServer("EliteHunter")
+        end
+
+        if forceNear then
+            local sorted = Spirit.GetMonAsSortedRange()[1]
+            local pos = sorted and sorted:FindFirstChild("HumanoidRootPart")
+                        and sorted.HumanoidRootPart.Position
+            if pos and Spirit.CaculateDistance(pos) < forceDist then
+                Spirit.MonResult = sorted
+            end
+        else
+            Spirit.MonResult = CombatController.Search(names)
+        end
+
+        local MonResult = Spirit.MonResult
+
+        if MonResult then
+            LastFound = os.time()
+            Spirit.LastFound = LastFound
+            local attackStart    = os.time()
+            local unchangedStart = os.time()
+            Spirit.SetTask("SubTask", "Attacking " .. tostring(MonResult.Name))
+
+            while task.wait() do
+                if _G.Stop then return end
+                if _G.FruitPriorityActive then return end
+                if _G.SkyTransitionActive then return end
+
+                if SweetChaliceInCombat() then
+                    pcall(function() if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end end)
+                    return
+                end
+
+                local hum = MonResult:FindFirstChild("Humanoid")
+                local hrp = MonResult:FindFirstChild("HumanoidRootPart")
+                if not hum or hum.Health <= 0 then break end
+                if not hrp then break end
+
+                Spirit.TweenController.Create(Spirit.HoverOver(hrp.Position, 35))
+
+                -- Pull same-name mobs to the target every tick.
+                pcall(function() Spirit.BringMobsTo(MonResult) end)
+
+                if Spirit.CaculateDistance(hrp.Position + Vector3.new(0, 35, 0)) < 150 then
+                    if callback then pcall(callback) end
+                    CombatController.Grab(names[1] or "")
+
+                    if MonResult.Name ~= "Core" then
+                        if ScriptStorage.PlayerData.Level > 100
+                           and (os.time() - unchangedStart) >= CombatController.MAX_ATTACK_DURATION_2
+                           and (hum.Health - hum.MaxHealth == 0) then
+                            Spirit.SetTask("SubTask", "Mob HP unchanged 60s — repositioning")
+                            unchangedStart = os.time()
+                            Spirit.TweenController.Create(hrp.CFrame + Vector3.new(0, 3, 0))
+                        end
+
+                        if (os.time() - attackStart) >= CombatController.MAX_ATTACK_DURATION
+                           and (hum.Health - hum.MaxHealth == 0) then
+                            attackStart = os.time()
+                            local oldPos = MonResult:GetAttribute("OldPosition")
+                            if oldPos then
+                                MonResult:SetPrimaryPartCFrame(CFrame.new(oldPos))
+                                MonResult:SetAttribute("IgnoreGrab", true)
+                                MonResult:SetAttribute("FailureCount",
+                                    (MonResult:GetAttribute("FailureCount") or 0) + 1)
+                                MonResult.HumanoidRootPart.CFrame = CFrame.new(oldPos)
+                                task.wait()
+                                return
+                            end
+                        end
+                    end
+
+                    local FarmFruitMastery = getgenv().FarmFruitMastery
+                    local raidIsland = Spirit.FunctionsHandler
+                        and Spirit.FunctionsHandler.RaidController
+                        and Spirit.FunctionsHandler.RaidController.Methods
+                        and Spirit.FunctionsHandler.RaidController.Methods.GetCurrentRaidIsland
+                    local onRaid = raidIsland and raidIsland:Call() or false
+
+                    if FarmFruitMastery
+                       and (FarmFruitMastery - os.time()) < 3
+                       and math.floor(hum.Health / hum.MaxHealth * 100) < 30
+                       and not onRaid then
+                        Spirit.TweenController.Create(hrp.CFrame + Vector3.new(0, 25, 0))
+                        EquipToolDynamic("Blox Fruit")
+                        Spirit.LockAimPositionTo(hrp.Position)
+                        local keys = {"Z", "X", "C", "V"}
+                        Spirit.SendKey(keys[math.random(1, #keys)], 0.31)
+                    else
+                        local selected = _G.SelectWeapon
+                        if selected and CheckItem(selected) then
+                            EquipToolDynamic(selected)
+                        else
+                            EquipToolDynamic(ScriptStorage.ForceToUseSword and "Sword" or "Melee")
+                        end
+                    end
+
+                    W_Attack.Attack(MonResult)
+
+                    if os.time() ~= unchangedStart then
+                        unchangedStart = os.time()
+                    end
+                end
+            end
+
+        elseif not forceNear then
+            local region = ScriptStorage.MobRegions[rawName]
+            if not region then
+                local spawn = Workspace.Enemies:FindFirstChild(rawName)
+                    or ReplicatedStorage:FindFirstChild(rawName)
+                if spawn and spawn:FindFirstChild("HumanoidRootPart") then
+                    region = {spawn:GetPrimaryPartCFrame().p}
+                end
+            end
+            if not region then
+                Spirit.Report("[Game data error] Mob " .. tostring(rawName) .. " has no spawn region data")
+                return
+            end
+
+            -- No target found → return idle. Task falls through to the
+            -- next dispatcher entry. Never tween to a stale spawn point
+            -- for a mob that isn't alive.
             return
         end
-
-        SetTask("MainTask", "Auto Melee | Buying " .. entry.name)
-        Spirit.BuyMelee(entry.key, true)
-        task.wait(0.3)
-        Spirit.BuyMelee(entry.key)
-        task.wait(0.6)
-        Spirit.RefreshInventory()
-
-        keyFarmState.sessionStart = 0
-        keyFarmState.retries      = 0
-        return
     end
+end
 
-    if Spirit.SeaIndex < source.seaIndex then
-        if Spirit.SeaIndex == 1 then
-            Remotes.CommF_:InvokeServer("TravelDressrosa")
-        elseif Spirit.SeaIndex == 2 then
-            Remotes.CommF_:InvokeServer("TravelZou")
+-- ═══════════════════════════════════════════════════════════════
+-- BRING MOBS — Dwac Hub pattern.
+--   Spirit.BringMobsTo(mob)   → pull same-name mobs to that mob
+--   Spirit.BringEnemy()       → pull Spirit.BringNames mobs to player
+-- ═══════════════════════════════════════════════════════════════
+getgenv().BringMonster = getgenv().BringMonster or false
+
+local lockedMobs = {}
+
+local function alive(m)
+    if not m or not m.Parent then return false end
+    local h = m:FindFirstChildOfClass("Humanoid")
+    return h and h.Health > 0
+end
+
+local function isLocalOwned(part)
+    if not part or not part.Parent then return false end
+    if part.Anchored then return false end
+    if isnetworkowner then
+        local ok, res = pcall(isnetworkowner, part)
+        return ok and res
+    end
+    return true
+end
+
+local function lockMob(v, hrp, hum)
+    if not lockedMobs[v] then
+        lockedMobs[v] = {
+            walkSpeed  = hum.WalkSpeed,
+            jumpPower  = hum.JumpPower,
+            autoRotate = hum.AutoRotate,
+        }
+    end
+    for _, a in ipairs(v:GetDescendants()) do
+        if a:IsA("BasePart") and a.CanCollide then
+            a.CanCollide = false
         end
-        SetTask("MainTask", "Auto Melee | Sailing to sea " .. source.seaIndex)
-        return
     end
-
-    if keyFarmState.sessionStart == 0 then
-        keyFarmState.sessionStart = tick()
-    end
-
-    local boss = workspace.Enemies:FindFirstChild(source.boss)
-
-    if not boss then
-        if tick() - keyFarmState.sessionStart > KEY_FARM_WAIT_SPAWN then
-            keyFarmState.sessionStart = tick()
-            keyFarmState.retries      = keyFarmState.retries + 1
-            SetTask("MainTask", "Auto Melee | " .. source.boss .. " not spawned — hopping")
-            Spirit.Hop()
-            return
-        end
-        SetTask("MainTask", "Auto Melee | Waiting for " .. source.boss)
-        return
-    end
-
-    SetTask("MainTask", "Auto Melee | Killing " .. source.boss .. " for " .. keyName)
-    Spirit.CombatController.Attack(source.boss)
-
-    if hasKeyItem(keyName) then
-        SetTask("MainTask", "Auto Melee | " .. keyName .. " dropped")
-        keyFarmState.sessionStart = tick()
-        return
-    end
-
-    keyFarmState.retries = keyFarmState.retries + 1
-    if keyFarmState.retries >= KEY_FARM_MAX_KILLS then
-        keyFarmState.retries      = 0
-        keyFarmState.sessionStart = tick()
-        SetTask("MainTask", "Auto Melee | " .. keyName .. " no drop — hopping")
-        Spirit.Hop()
+    local lock = hrp:FindFirstChild("BroughtLock")
+    if not lock then
+        lock = Instance.new("BodyVelocity")
+        lock.Name     = "BroughtLock"
+        lock.MaxForce = Vector3.new(10000, 10000, 10000)
+        lock.Velocity = Vector3.zero
+        lock.Parent   = hrp
     else
-        SetTask("MainTask", "Auto Melee | " .. source.boss .. " attempt " .. keyFarmState.retries)
+        lock.Velocity = Vector3.zero
+    end
+    hum.WalkSpeed = 0
+end
+
+local function releaseMob(v)
+    local saved = lockedMobs[v]
+    if not saved then return end
+    if v.Parent then
+        local hrp = v:FindFirstChild("HumanoidRootPart")
+        local hum = v:FindFirstChild("Humanoid")
+        if hrp then
+            local lock = hrp:FindFirstChild("BroughtLock")
+            if lock then lock:Destroy() end
+        end
+        if hum then
+            pcall(function()
+                hum.WalkSpeed  = saved.walkSpeed  or 16
+                hum.JumpPower  = saved.jumpPower  or 50
+                hum.AutoRotate = saved.autoRotate ~= false
+            end)
+        end
+    end
+    lockedMobs[v] = nil
+end
+
+function Spirit.BringMobsTo(targetMob)
+    if not targetMob or not targetMob.Parent then return end
+    local targetHRP = targetMob:FindFirstChild("HumanoidRootPart")
+    if not targetHRP then return end
+
+    pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
+
+    local targetCFrame = targetHRP.CFrame
+    for _, v in ipairs(Workspace.Enemies:GetChildren()) do
+        if v ~= targetMob and v.Name == targetMob.Name and alive(v) then
+            local hrp = v:FindFirstChild("HumanoidRootPart")
+            local hum = v:FindFirstChild("Humanoid")
+            if hrp and hum and isLocalOwned(hrp) then
+                if (hrp.Position - targetCFrame.Position).Magnitude <= 500 then
+                    lockMob(v, hrp, hum)
+                    v:SetPrimaryPartCFrame(targetCFrame)
+                end
+            end
+        end
     end
 end
 
-local MC = Spirit.FunctionsHandler.MeleesController
+function Spirit.BringEnemy()
+    if not getgenv().BringMonster then return end
+    if _G.FruitPriorityActive then return end
+    if _G.SkyTransitionActive then return end
 
-MC:RegisterMethod("Refresh", function()
-    if not Spirit.Config then return nil end
-    if not Spirit.Config.Items or not Spirit.Config.Items.AutoFullyMelees then return nil end
-    if not Spirit.Config.Melee or not Spirit.Config.Melee.AutoBuy then return nil end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
 
-    local next_buy = findNextUnowned()
+    pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
 
-    if not next_buy then
-        _G.MeleeRaidRequest = false
-        _G.MeleeBuyPending  = false
-        return nil
+    local names = Spirit.BringNames
+    if (not names or #names == 0) then
+        if Spirit.Mon and Spirit.Mon ~= "" then
+            names = {Spirit.Mon}
+        else
+            return
+        end
     end
 
-    if onlyBlockedByKey(next_buy) then
-        _G.MeleeRaidRequest = false
-        _G.MeleeBuyPending  = true
-        return {kind = "farm_key", entry = next_buy, key = next_buy.needKey}
+    -- Stack point: 3 studs below the player's HRP so mobs sit at feet level.
+    local targetCFrame = root.CFrame - Vector3.new(0, 3, 0)
+    local pulled = 0
+    for _, v in ipairs(Workspace.Enemies:GetChildren()) do
+        if pulled >= 20 then break end
+        if not table.find(names, v.Name) then continue end
+        local hrp = v:FindFirstChild("HumanoidRootPart")
+        local hum = v:FindFirstChild("Humanoid")
+        if not hrp or not hum or hum.Health <= 0 then continue end
+        if (hrp.Position - root.Position).Magnitude > 350 then continue end
+        if not isLocalOwned(hrp) then continue end
+        lockMob(v, hrp, hum)
+        v:SetPrimaryPartCFrame(targetCFrame)
+        pulled = pulled + 1
     end
 
-    if not (HasStaticReqs(next_buy) and HasPrice(next_buy)) then
-        _G.MeleeRaidRequest = false
-        _G.MeleeBuyPending  = true
-        return nil
+    for v in pairs(lockedMobs) do
+        if not v.Parent then lockedMobs[v] = nil end
     end
+end
 
-    if next_buy.needRaids and raidsDoneFor(next_buy) < next_buy.needRaids then
-        _G.MeleeRaidRequest = true
-        _G.MeleeBuyPending  = true
-        SetTask("MainTask", next_buy.name .. " prep | Raids "
-            .. raidsDoneFor(next_buy) .. "/" .. next_buy.needRaids)
-        return nil
-    end
-
-    _G.MeleeRaidRequest = false
-    _G.MeleeBuyPending  = true
-    return {kind = "buy", entry = next_buy}
-end)
-
-MC:RegisterMethod("Start", function(action)
-    if not action then return end
-
-    if action.kind == "farm_key" then
-        farmKeyAndBuy(action)
-        return
-    end
-
-    if action.kind ~= "buy" then return end
-
-    local entry = action.entry
-
-    if not GoToTeacher(entry.name) then
-        SetTask("MainTask", "Auto Melee | Moving to " .. entry.name .. " teacher")
-        return
-    end
-
-    SetTask("MainTask", "Auto Melee | Buying " .. entry.name)
-    Spirit.BuyMelee(entry.key, true)
-    task.wait(0.3)
-    Spirit.BuyMelee(entry.key)
-    task.wait(0.6)
-    Spirit.RefreshInventory()
-
-    if entry.name == "Dragon Claw" then
-        _G.MeleeRaidsDone = 0
-    end
-
-    if entry.name == "Godhuman" then
-        _G.MeleeBuyPending = false
+task.spawn(function()
+    while task.wait(0.05) do
+        Spirit.BringEnemy()
     end
 end)
 
 task.spawn(function()
-    while task.wait(2) do
-        pcall(function()
-            if not (Spirit.Config and Spirit.Config.Items and Spirit.Config.Items.AutoFullyMelees) then return end
-            local now = os.time()
-            if now - mele.lastMasteryCheck < 240 then return end
-            mele.lastMasteryCheck = now
-            local target, idx, want = findTrainingMelee()
-            if not target then return end
-            mele.currentTrainName = target
-            mele.currentTrainIdx  = idx
-            _G.SelectWeapon = target
-            SetTask("SubTask", "Training " .. target
-                .. " (" .. masteryOf(target) .. "/" .. (want or 400) .. ")")
-        end)
+    local last = getgenv().BringMonster
+    while task.wait(1) do
+        local cur = getgenv().BringMonster
+        if last and not cur then
+            for v in pairs(lockedMobs) do pcall(releaseMob, v) end
+            lockedMobs = {}
+        end
+        last = cur
     end
 end)
 
-task.spawn(function()
-    local inRaid, inRaidSince = false, 0
-    while task.wait(2) do
-        pcall(function()
-            local RC = Spirit.FunctionsHandler.RaidController
-            if not RC or not RC.Methods.GetCurrentRaidIsland then return end
-            local island = RC.Methods.GetCurrentRaidIsland:Call()
-            if island then
-                if not inRaid then
-                    inRaid = true
-                    inRaidSince = tick()
-                end
-            elseif inRaid then
-                if tick() - inRaidSince > 30 then
-                    _G.MeleeRaidsDone = (_G.MeleeRaidsDone or 0) + 1
-                end
-                inRaid = false
-                inRaidSince = 0
-            end
-        end)
-    end
-end)
-
-Spirit.__mele_ready = true
+Spirit.__combat_ready = true
