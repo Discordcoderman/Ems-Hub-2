@@ -278,12 +278,7 @@ end
 Spirit._AddPointState = {lastLevel = 0, lastCall = 0}
 
 -- ═══════════════════════════════════════════════════════════════
--- STAT DISTRIBUTION — 2 melee : 1 defense per level (3 pts/level).
--- Splits the available pool 2:1 in a single flush. Sword / gun /
--- fruit allocation is intentionally not used.
---   1 point  → all melee
---   2 points → 1 melee + 1 defense
---   3+       → floor(N * 2/3) melee, remainder defense
+-- STAT DISTRIBUTION — 2 melee : 1 defense per level
 -- ═══════════════════════════════════════════════════════════════
 function Spirit.AddPoint()
     local data = LocalPlayer:FindFirstChild("Data")
@@ -512,7 +507,71 @@ Spirit.placeId  = placeId
 Spirit.Sea      = Sea
 Spirit.SeaIndex = SeaIndex
 
+-- ═══════════════════════════════════════════════════════════════
+-- OWNERSHIP CHECKS
+-- Three ways to confirm the player already has something:
+--   1. player tag     (persists across sessions for some items)
+--   2. character child (present only while held/active)
+--   3. backpack / inventory (ground truth)
+-- Any one returning true means owned. Buy paths call these before
+-- firing the remote so we never re-invoke for something held.
+-- ═══════════════════════════════════════════════════════════════
+local function playerHasTag(tag)
+    local ok, v = pcall(function() return LocalPlayer:HasTag(tag) end)
+    return ok and v == true
+end
+
+local function charHasChild(name)
+    local char = Spirit.Character
+    if not char then return false end
+    return char:FindFirstChild(name) ~= nil
+end
+
+local function inBackpack(name)
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp and bp:FindFirstChild(name) then return true end
+    local char = Spirit.Character
+    if char and char:FindFirstChild(name) then return true end
+    if ScriptStorage.Backpack and ScriptStorage.Backpack[name] then return true end
+    return false
+end
+
+function Spirit.OwnsAbility(name)
+    if name == "Buso" then
+        return Spirit._busoBought or playerHasTag("Buso") or charHasChild("HasBuso")
+    elseif name == "Soru" then
+        return Spirit._soruBought or playerHasTag("Soru") or playerHasTag("FlashStep")
+    elseif name == "Geppo" then
+        return Spirit._geppoBought or playerHasTag("Geppo") or playerHasTag("Skywalk")
+    elseif name == "Ken" then
+        return Spirit.kenBought or playerHasTag("Ken") or charHasChild("HasKen")
+    end
+    return false
+end
+
+function Spirit.OwnsItem(name)
+    return inBackpack(name)
+end
+
+function Spirit.OwnsMelee(name)
+    return inBackpack(name)
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- BUY MELEE — gated on ownership. Never fires for something held.
+-- ═══════════════════════════════════════════════════════════════
 function Spirit.BuyMelee(meleeId, checkOnly)
+    local displayName = ({
+        BlackLeg = "Black Leg", Electro = "Electro",
+        FishmanKarate = "Fishman Karate", DragonClaw = "Dragon Claw",
+        Superhuman = "Superhuman", DeathStep = "Death Step",
+        SharkmanKarate = "Sharkman Karate", ElectricClaw = "Electric Claw",
+        DragonTalon = "Dragon Talon", Godhuman = "Godhuman",
+    })[meleeId]
+    if displayName and Spirit.OwnsMelee(displayName) then
+        return true
+    end
+
     if meleeId == "DragonClaw" then
         if workspace.NPCs:FindFirstChild("Sabi") then
             if checkOnly then return Remotes.CommF_:InvokeServer("BlackbeardReward", "DragonClaw", "1") end
