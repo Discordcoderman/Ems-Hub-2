@@ -73,7 +73,6 @@ pcall(function()
     end)
 end)
 
--- Quest safety net — resets stale remote state.
 task.spawn(function()
     local emptyStreak = 0
     while task.wait(1) do
@@ -94,7 +93,8 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- FPS BOOST
+-- FPS BOOST — kept as an optional pass; EmsUI.EnableAntiLag()
+-- already runs a permanent strip pass in ui.lua
 -- ═══════════════════════════════════════════════════════════════
 local GRAYABLE = {
     BasePart = true, MeshPart = true, UnionOperation = true,
@@ -168,20 +168,14 @@ end)
 pcall(function() Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO REDEEM — runs INLINE, blocks farming until codes are done.
+-- AUTO REDEEM — per-code tracking, 10x faster
 --
--- First boot on a fresh account: fires every code, then falls
--- through to the main loop. Every subsequent boot: reads the
--- Storage flag, skips in under a millisecond.
---
--- Progress is written to the panel's status line so the user sees
--- each code as it fires. Farming does not start until this block
--- finishes.
+-- First boot: fires every not-yet-redeemed code at 0.15s intervals,
+-- marks each one on completion. Subsequent boots skip anything in
+-- Storage.RedeemedCodes in under a millisecond.
 -- ═══════════════════════════════════════════════════════════════
 local REDEEM_CODES = {
-    -- Stat reset codes
     "SUB2GAMERROBOT_RESET1", "KITT_RESET",
-    -- EXP boost codes
     "fudd10", "fudd10_v2", "BIGNEWS", "THEGREATACE",
     "SUB2GAMERROBOT_EXP1", "Sub2UncleKizaru", "Sub2Fer999",
     "Sub2OfficialNoobie", "Sub2NoobMaster123", "Sub2CaptainMaui",
@@ -191,17 +185,16 @@ local REDEEM_CODES = {
     "EASTEREXP", "LIGHTNINGABUSE",
 }
 
--- Wait for the pieces the redeem needs.
 repeat task.wait(0.25) until Spirit.Storage
 repeat task.wait(0.25) until ScriptStorage.PlayerData.Level ~= nil
 
-local redeemNeeded = not Spirit.Storage:Get("CodesRedeemed_v1")
+local redeemed = Spirit.Storage:Get("RedeemedCodes")
+if type(redeemed) ~= "table" then redeemed = {} end
+
 local levelBlocked = (ScriptStorage.PlayerData.Level or 0) >= Spirit.MaxLevel
 
-if redeemNeeded and not levelBlocked then
-    -- Show progress on the panel while we run.
+if not levelBlocked then
     SetText("MainTextLabel", "Redeeming codes…")
-    SetText("Task2", "")
 
     local RemotesRS = ReplicatedStorage:WaitForChild("Remotes", 30)
     local redeem, commF
@@ -212,36 +205,36 @@ if redeemNeeded and not levelBlocked then
     end
 
     if redeem or commF then
-        local sent, failed = 0, 0
+        local sent, skipped, failed = 0, 0, 0
         for i, code in ipairs(REDEEM_CODES) do
-            SetText("Task2", string.format("%d/%d  %s", i, #REDEEM_CODES, code))
-            local ok = pcall(function()
-                if redeem then
-                    redeem:InvokeServer(code)
-                else
-                    commF:InvokeServer("Redeem", code)
-                end
-            end)
-            if ok then sent = sent + 1 else failed = failed + 1 end
-            task.wait(1.5)
+            if redeemed[code] then
+                skipped = skipped + 1
+            else
+                SetText("MainTextLabel",
+                    string.format("Redeeming codes… %d/%d  %s", i, #REDEEM_CODES, code))
+                local ok = pcall(function()
+                    if redeem then
+                        redeem:InvokeServer(code)
+                    else
+                        commF:InvokeServer("Redeem", code)
+                    end
+                end)
+                if ok then sent = sent + 1 else failed = failed + 1 end
+                redeemed[code] = true
+                task.wait(0.15)
+            end
         end
-        warn(string.format("[main] Redeem complete — %d sent, %d skipped", sent, failed))
+        Spirit.Storage:Set("RedeemedCodes", redeemed)
+        Spirit.Storage:Save()
+        warn(string.format(
+            "[main] Redeem — %d sent, %d skipped (already redeemed), %d failed",
+            sent, skipped, failed))
     else
         warn("[main] No Redeem remote — skipping redeem")
     end
-
-    -- Mark attempted. Expired codes won't start working on retry.
-    Spirit.Storage:Set("CodesRedeemed_v1", true)
-    Spirit.Storage:Save()
-elseif not Spirit.Storage:Get("CodesRedeemed_v1") then
-    -- Max level — no point redeeming. Mark done silently.
-    Spirit.Storage:Set("CodesRedeemed_v1", true)
-    Spirit.Storage:Save()
 end
 
--- Redeem done. Clear the status line so the task loop can take over.
 SetText("MainTextLabel", "Loaded — waiting for player data...")
-SetText("Task2", "")
 
 -- ═══════════════════════════════════════════════════════════════
 -- IDLE TIMER WRITER
@@ -260,7 +253,7 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- MAIN LOOP — only reached after redeem is complete
+-- MAIN LOOP
 -- ═══════════════════════════════════════════════════════════════
 while task.wait() do
     pcall(Spirit.RefreshPlayerData)
