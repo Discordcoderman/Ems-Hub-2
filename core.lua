@@ -133,7 +133,9 @@ local function GetConnectionEnemies(enemyName)
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return nil end
     local nearest, dist = nil, math.huge
-    for _, e in pairs(workspace.Enemies:GetChildren()) do
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+    for _, e in pairs(enemies:GetChildren()) do
         if e.Name == enemyName and e:FindFirstChild("Humanoid") and e.Humanoid.Health > 0 then
             local root = e:FindFirstChild("HumanoidRootPart")
             if root then
@@ -146,22 +148,27 @@ local function GetConnectionEnemies(enemyName)
 end
 Spirit.GetConnectionEnemies = GetConnectionEnemies
 
+-- ═══════════════════════════════════════════════════════════════
+-- GetMonAsSortedRange — workspace.Enemies ONLY.
+-- ReplicatedStorage children that carry Humanoid + HRP are templates
+-- with saved CFrames in the sky. Including them sends the tween
+-- target to Y ≈ 900+ (template.Y + 35). Keep them out.
+-- ═══════════════════════════════════════════════════════════════
 local function GetMonAsSortedRange()
     local list = {}
-    for _, a in pairs(workspace.Enemies:GetChildren()) do
-        if a and a:FindFirstChild("Humanoid") and a:FindFirstChild("HumanoidRootPart")
-           and a.Humanoid.Health > 0 then
-            table.insert(list, a)
-        end
-    end
-    for _, a in pairs(game.ReplicatedStorage:GetChildren()) do
-        if a and a:FindFirstChild("Humanoid") and a:FindFirstChild("HumanoidRootPart")
-           and a.Humanoid.Health > 0 then
-            table.insert(list, a)
+    local enemies = workspace:FindFirstChild("Enemies")
+    if enemies then
+        for _, a in ipairs(enemies:GetChildren()) do
+            if a and a:FindFirstChild("Humanoid")
+               and a:FindFirstChild("HumanoidRootPart")
+               and a.Humanoid.Health > 0 then
+                table.insert(list, a)
+            end
         end
     end
     table.sort(list, function(x, y)
-        return CaculateDistance(x.HumanoidRootPart.CFrame) < CaculateDistance(y.HumanoidRootPart.CFrame)
+        return CaculateDistance(x.HumanoidRootPart.CFrame)
+             < CaculateDistance(y.HumanoidRootPart.CFrame)
     end)
     return list
 end
@@ -277,9 +284,6 @@ end
 
 Spirit._AddPointState = {lastLevel = 0, lastCall = 0}
 
--- ═══════════════════════════════════════════════════════════════
--- STAT DISTRIBUTION — 2 melee : 1 defense per level
--- ═══════════════════════════════════════════════════════════════
 function Spirit.AddPoint()
     local data = LocalPlayer:FindFirstChild("Data")
     if not data then return end
@@ -507,15 +511,6 @@ Spirit.placeId  = placeId
 Spirit.Sea      = Sea
 Spirit.SeaIndex = SeaIndex
 
--- ═══════════════════════════════════════════════════════════════
--- OWNERSHIP CHECKS
--- Three ways to confirm the player already has something:
---   1. player tag     (persists across sessions for some items)
---   2. character child (present only while held/active)
---   3. backpack / inventory (ground truth)
--- Any one returning true means owned. Buy paths call these before
--- firing the remote so we never re-invoke for something held.
--- ═══════════════════════════════════════════════════════════════
 local function playerHasTag(tag)
     local ok, v = pcall(function() return LocalPlayer:HasTag(tag) end)
     return ok and v == true
@@ -557,9 +552,6 @@ function Spirit.OwnsMelee(name)
     return inBackpack(name)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- BUY MELEE — gated on ownership. Never fires for something held.
--- ═══════════════════════════════════════════════════════════════
 function Spirit.BuyMelee(meleeId, checkOnly)
     local displayName = ({
         BlackLeg = "Black Leg", Electro = "Electro",
