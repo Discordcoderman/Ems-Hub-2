@@ -1,11 +1,4 @@
 -- farming.lua — standalone farming tasks
---
--- Registers 7 tasks on the standard Refresh / Start contract:
---   AutoEliteHunterTask, AutoDoughKingTask, AutoMaterialTask,
---   KillAuraTask, AutoChestTask, SwordMastery600Task, AutoBossTask
---
--- All toggles read from Spirit.Config.Farming. All state lives on
--- Spirit.FunctionsHandler[taskName] via Set/Get — no _G flags.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[farming] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[farming] tasks.lua not loaded") end
@@ -68,10 +61,15 @@ local function hopAfter(delay)
 end
 
 -- ═══════════════════════════════════════════════════════════════
+-- Boss skip set — never targeted by generic boss farms
+-- ═══════════════════════════════════════════════════════════════
+local BOSS_SKIP = {
+    ["Awakened Ice Admiral"] = true,
+    ["Tide Keeper"]          = true,
+}
+
+-- ═══════════════════════════════════════════════════════════════
 -- AUTO ELITE HUNTER
--- Full quest chain: request → kill target → server turn-in.
--- Cooldown-aware: server refuses a new quest for ~30s after a
--- turn-in; on that signal, backs off 60s.
 -- ═══════════════════════════════════════════════════════════════
 local EH = Spirit.FunctionsHandler.AutoEliteHunterTask
 local ehCooldown = 0
@@ -131,9 +129,6 @@ end)
 
 -- ═══════════════════════════════════════════════════════════════
 -- AUTO DOUGH KING
--- Chain: elite 30 kills → God's Chalice → 10 Conjured Cocoa →
--- SweetChaliceNpc trade → Sweet Chalice → Cake Prince spawner →
--- Dough King spawns → kill.
 -- ═══════════════════════════════════════════════════════════════
 local DK = Spirit.FunctionsHandler.AutoDoughKingTask
 
@@ -213,7 +208,7 @@ DK:RegisterMethod("Start", function(stage)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO MATERIAL — 15 sources from Spirit.MATERIAL_SOURCES
+-- AUTO MATERIAL
 -- ═══════════════════════════════════════════════════════════════
 local AM = Spirit.FunctionsHandler.AutoMaterialTask
 
@@ -253,7 +248,7 @@ AM:RegisterMethod("Start", function(spec)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- KILL AURA — SimulationRadius claim + direct Health = 0
+-- KILL AURA
 -- ═══════════════════════════════════════════════════════════════
 local KA = Spirit.FunctionsHandler.KillAuraTask
 
@@ -300,7 +295,7 @@ KA:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO CHEST — nearest tagged chest, optional hop after N
+-- AUTO CHEST
 -- ═══════════════════════════════════════════════════════════════
 local AC = Spirit.FunctionsHandler.AutoChestTask
 local chestCount  = 0
@@ -356,7 +351,7 @@ AC:RegisterMethod("Start", function(chest)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- SWORD MASTERY 600 — cycles every owned sword to 600
+-- SWORD MASTERY 600
 -- ═══════════════════════════════════════════════════════════════
 local SM = Spirit.FunctionsHandler.SwordMastery600Task
 
@@ -388,7 +383,7 @@ SM:RegisterMethod("Start", function(swordName)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO BOSS — nearest from expanded BossesOrder
+-- AUTO BOSS — expanded BossesOrder, skips Tide Keeper + Ice Admiral
 -- ═══════════════════════════════════════════════════════════════
 local AB = Spirit.FunctionsHandler.AutoBossTask
 
@@ -400,14 +395,16 @@ AB:RegisterMethod("Refresh", function()
 
     local pick = nil
     for _, name in ipairs(Spirit.BossesOrder) do
-        local lvlReq = Spirit.BossesOrderLevel[name]
-        if (not lvlReq) or lv >= lvlReq then
-            local live = ScriptStorage.Enemies[name]
-            if live and alive(live) then
-                local rp = live:FindFirstChild("HumanoidRootPart")
-                if rp and (rp.Position - hrp.Position).Magnitude <= 5000 then
-                    pick = name
-                    break
+        if not BOSS_SKIP[name] then
+            local lvlReq = Spirit.BossesOrderLevel[name]
+            if (not lvlReq) or lv >= lvlReq then
+                local live = ScriptStorage.Enemies[name]
+                if live and alive(live) then
+                    local rp = live:FindFirstChild("HumanoidRootPart")
+                    if rp and (rp.Position - hrp.Position).Magnitude <= 5000 then
+                        pick = name
+                        break
+                    end
                 end
             end
         end
@@ -418,6 +415,145 @@ end)
 AB:RegisterMethod("Start", function(bossName)
     SetTask("MainTask", "Boss | " .. bossName)
     Spirit.CombatController.Attack(bossName)
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- V2 MELEE FLOW
+--   Trigger: next melee in MASTERY_TRAIN_ORDER is a V2 melee that
+--   isn't owned yet AND its V1 prerequisite is at 400+.
+--   Flow:  correct sea → kill Awakened Ice Admiral → Library Key
+--          → tween to teacher → hand in → buy.
+-- ═══════════════════════════════════════════════════════════════
+local V2 = Spirit.FunctionsHandler.V2MeleeTask
+
+local V2_MELEE_MAP = {
+    ["Death Step"]      = {teacher = "Phoeyu, the Reformed", sea = 2,
+                           v1 = "Black Leg",      buyId = "DeathStep"},
+    ["Sharkman Karate"] = {teacher = "Sharkman Teacher",      sea = 2,
+                           v1 = "Fishman Karate", buyId = "SharkmanKarate"},
+    ["Electric Claw"]   = {teacher = "Previous Hero",          sea = 3,
+                           v1 = "Electro",        buyId = "ElectricClaw"},
+    ["Dragon Talon"]    = {teacher = "Uzoth",                  sea = 3,
+                           v1 = "Dragon Claw",    buyId = "DragonTalon"},
+}
+
+local function getCurrentMeleeTarget()
+    local order = Spirit.MASTERY_TRAIN_ORDER or {}
+    local owned = ScriptStorage.Melees or {}
+    local bp    = ScriptStorage.Backpack or {}
+    for _, entry in ipairs(order) do
+        if not bp[entry.name] then return entry end
+        local m = owned[entry.name]
+        if m and m < entry.target then return entry end
+    end
+    return nil
+end
+
+local function hasLibraryKey()
+    if ScriptStorage.Backpack["Library Key"] then return true end
+    local char = LocalPlayer.Character
+    local bp   = LocalPlayer:FindFirstChild("Backpack")
+    if char and char:FindFirstChild("Library Key") then return true end
+    if bp and bp:FindFirstChild("Library Key") then return true end
+    return false
+end
+
+V2:RegisterMethod("Refresh", function()
+    local target = getCurrentMeleeTarget()
+    if not target then return nil end
+    local spec = V2_MELEE_MAP[target.name]
+    if not spec then return nil end
+    local v1M = ScriptStorage.Melees[spec.v1] or 0
+    if v1M < 400 then return nil end
+    return {name = target.name, spec = spec}
+end)
+
+V2:RegisterMethod("Start", function(task)
+    local name, spec = task.name, task.spec
+
+    -- Step 1: correct sea
+    if Spirit.SeaIndex ~= spec.sea then
+        SetTask("MainTask", "V2 Melee | Sailing to sea " .. spec.sea .. " for " .. name)
+        if spec.sea == 2 then
+            pcall(function() Remotes.CommF_:InvokeServer("TravelDressrosa") end)
+        elseif spec.sea == 3 then
+            pcall(function() Remotes.CommF_:InvokeServer("TravelZou") end)
+        end
+        return
+    end
+
+    -- Step 2: kill Awakened Ice Admiral until Library Key lands
+    if not hasLibraryKey() then
+        SetTask("MainTask", "V2 Melee | Awakened Ice Admiral — Library Key")
+        local admiral = ScriptStorage.Enemies["Awakened Ice Admiral"]
+        local admiralLive = admiral
+            and admiral:FindFirstChild("Humanoid")
+            and admiral.Humanoid.Health > 0
+        if admiralLive then
+            Spirit.CombatController.Attack("Awakened Ice Admiral")
+        else
+            local targetCF = (Spirit.SEA2 and Spirit.SEA2.ICE_DOOR_CF)
+                or CFrame.new(1406, 87, -1376)
+            Spirit.TweenController.Create(targetCF + Vector3.new(0, 20, 0))
+        end
+        return
+    end
+
+    -- Step 3: walk to teacher
+    SetTask("MainTask", "V2 Melee | Deliver key to " .. spec.teacher)
+    local teacher
+    for _, folder in ipairs({
+        workspace:FindFirstChild("NPCs"),
+        game.ReplicatedStorage:FindFirstChild("NPCs"),
+    }) do
+        if folder then
+            teacher = folder:FindFirstChild(spec.teacher)
+            if not teacher then
+                for _, npc in ipairs(folder:GetChildren()) do
+                    if npc:IsA("Model") then
+                        if string.find(npc.Name, spec.teacher, 1, true)
+                           or string.find(spec.teacher, npc.Name, 1, true) then
+                            teacher = npc
+                            break
+                        end
+                    end
+                end
+            end
+            if teacher then break end
+        end
+    end
+
+    if not teacher then
+        Spirit.Report("[V2] Teacher not found: " .. spec.teacher)
+        return
+    end
+
+    local teacherCF
+    pcall(function()
+        if teacher:FindFirstChild("HumanoidRootPart") then
+            teacherCF = teacher.HumanoidRootPart.CFrame
+        else
+            teacherCF = teacher:GetModelCFrame()
+        end
+    end)
+    if not teacherCF then return end
+
+    local dist = Spirit.CaculateDistance(teacherCF.Position)
+    if dist > 12 then
+        Spirit.TweenController.Create(teacherCF + Vector3.new(0, 3, 3))
+        return
+    end
+
+    -- Step 4: hand in
+    pcall(function()
+        Spirit.BuyMelee(spec.buyId, true)
+    end)
+    task.wait(0.4)
+    pcall(function()
+        Spirit.BuyMelee(spec.buyId)
+    end)
+    task.wait(0.4)
+    Spirit.RefreshInventory()
 end)
 
 Spirit.__farming_ready = true
