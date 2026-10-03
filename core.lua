@@ -148,12 +148,7 @@ local function GetConnectionEnemies(enemyName)
 end
 Spirit.GetConnectionEnemies = GetConnectionEnemies
 
--- ═══════════════════════════════════════════════════════════════
--- GetMonAsSortedRange — workspace.Enemies ONLY.
--- ReplicatedStorage children that carry Humanoid + HRP are templates
--- with saved CFrames in the sky. Including them sends the tween
--- target to Y ≈ 900+ (template.Y + 35). Keep them out.
--- ═══════════════════════════════════════════════════════════════
+-- workspace.Enemies ONLY. ReplicatedStorage templates live at sky CFrames.
 local function GetMonAsSortedRange()
     local list = {}
     local enemies = workspace:FindFirstChild("Enemies")
