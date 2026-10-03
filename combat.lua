@@ -1,4 +1,7 @@
--- combat.lua — CombatController, BringMobs (Dwac pattern), fast-attack
+-- combat.lua — CombatController, BringMobs, fast-attack
+--   · Search only reads workspace.Enemies — no ReplicatedStorage fallback
+--   · Attack rejects any target not parented to workspace.Enemies
+--   · No-target branch returns idle, never tweens to a fallback
 local Spirit = getgenv().Spirit
 if not Spirit then error("[combat] core.lua not loaded") end
 if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
@@ -9,7 +12,6 @@ local ReplicatedStorage = Services.ReplicatedStorage
 local LocalPlayer       = Spirit.LocalPlayer
 local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
-local Players           = Services.Players
 
 local function CheckItem(itemName)
     if not itemName then return false end
@@ -33,19 +35,10 @@ local function CheckItem(itemName)
 end
 Spirit.CheckItem = CheckItem
 
--- ═══════════════════════════════════════════════════════════════
--- NETWORK OWNERSHIP
--- We can only teleport a mob's parts if we own its physics. The
--- SimulationRadius boost claims ownership of nearby mobs; the check
--- below confirms per-part before any CFrame write.
--- ═══════════════════════════════════════════════════════════════
 if not isnetworkowner then
     isnetworkowner = function(part)
         if not part or not part.Parent then return false end
         if part.Anchored then return false end
-        -- Any mob within SimulationRadius is ours to move. Since we
-        -- set the radius to math.huge on every BringMobs call, this
-        -- reduces to "we're the only client that can write it".
         return true
     end
 end
@@ -58,7 +51,9 @@ local function GetAllBladeHits()
     local hits = {}
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return hits end
-    for _, e in ipairs(Workspace.Enemies:GetChildren()) do
+    local enemies = Workspace:FindFirstChild("Enemies")
+    if not enemies then return hits end
+    for _, e in ipairs(enemies:GetChildren()) do
         if e:FindFirstChild("Humanoid")
            and e:FindFirstChild("HumanoidRootPart")
            and e.Humanoid.Health > 0
@@ -145,25 +140,25 @@ local function Sort1(entity)
     return math.floor(Spirit.CaculateDistance(entity.HumanoidRootPart.CFrame))
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- Search — workspace.Enemies ONLY. No ReplicatedStorage fallback.
+-- ═══════════════════════════════════════════════════════════════
 function CombatController.Search(names)
+    local enemies = Workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+
     local candidates = {}
-    local anyFound   = false
-    for _, entity in ipairs(Spirit.GetMonAsSortedRange()) do
+    for _, entity in ipairs(enemies:GetChildren()) do
         if table.find(names, entity.Name)
            and entity:FindFirstChild("Humanoid")
            and entity.Humanoid.Health > 0 then
             if (entity:GetAttribute("FailureCount") or 0) < 3 then
-                anyFound = true
                 table.insert(candidates, entity)
             end
         end
     end
     table.sort(candidates, function(a, b) return Sort1(a) < Sort1(b) end)
-    if anyFound and candidates[1] then return candidates[1] end
-    for _, npcName in ipairs(names) do
-        local npc = ReplicatedStorage:FindFirstChild(npcName)
-        if npc then return npc end
-    end
+    return candidates[1]
 end
 
 function CombatController.Grab(mobName)
@@ -173,6 +168,7 @@ function CombatController.Grab(mobName)
     GrabDebounce = os.time()
     local MonResult = Spirit.MonResult
     if not MonResult or not MonResult:FindFirstChild("HumanoidRootPart") then return end
+    if MonResult.Parent ~= Workspace.Enemies then return end
 
     local targetPos = MonResult.HumanoidRootPart.Position
     local AreaMob   = false
@@ -258,6 +254,14 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 
         local MonResult = Spirit.MonResult
 
+        -- Reject anything not under workspace.Enemies. A ReplicatedStorage
+        -- template has a saved CFrame in the sky — following it to Y+35
+        -- is what sends the character to ~952m.
+        if MonResult and MonResult.Parent ~= Workspace.Enemies then
+            MonResult = nil
+            Spirit.MonResult = nil
+        end
+
         if MonResult then
             LastFound = os.time()
             Spirit.LastFound = LastFound
@@ -282,7 +286,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 
                 Spirit.TweenController.Create(Spirit.HoverOver(hrp.Position, 35))
 
-                -- Pull same-name mobs to the target every tick.
                 pcall(function() Spirit.BringMobsTo(MonResult) end)
 
                 if Spirit.CaculateDistance(hrp.Position + Vector3.new(0, 35, 0)) < 150 then
@@ -348,48 +351,16 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
             end
 
         elseif not forceNear then
-            local region = ScriptStorage.MobRegions[rawName]
-            if not region then
-                local spawn = Workspace.Enemies:FindFirstChild(rawName)
-                    or ReplicatedStorage:FindFirstChild(rawName)
-                if spawn and spawn:FindFirstChild("HumanoidRootPart") then
-                    region = {spawn:GetPrimaryPartCFrame().p}
-                end
-            end
-            if not region then
-                Spirit.Report("[Game data error] Mob " .. tostring(rawName) .. " has no spawn region data")
-                return
-            end
-
-            if not region[CombatController.CurrentIndex] then
-                CombatController.CurrentIndex = 1
-            end
-            local target = region[CombatController.CurrentIndex]
-            Spirit.TweenController.Create(target + Vector3.new(0, 35, 35))
-            if Spirit.CaculateDistance(target + Vector3.new(0, 35, 35)) < 15 then
-                CombatController.CurrentIndex = CombatController.CurrentIndex + 1
-            end
+            -- No live target found. Return idle — do NOT tween anywhere.
+            -- Tweening to a fallback position is what moved the character
+            -- to a template spawn in the sky.
+            return
         end
     end
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- BRING MOBS — Dwac Hub pattern.
---
--- Two entry points:
---   Spirit.BringMobsTo(mob)   → pull all same-name mobs to that mob
---   Spirit.BringEnemy()       → pull Spirit.BringNames mobs to player
---
--- Mechanics (both):
---   1. sethiddenproperty SimulationRadius = math.huge
---   2. per-mob isnetworkowner check
---   3. kill collision on every BasePart
---   4. BodyVelocity "BroughtLock" at MaxForce 10000, Velocity 0
---   5. Humanoid.WalkSpeed = 0
---   6. SetPrimaryPartCFrame(targetCFrame) — this is the ONLY CFrame
---      write. We do NOT also do hrp.CFrame = ... — doing both makes
---      SetPrimaryPartCFrame re-anchor the model against the HRP write
---      and the mob snaps back on the next replication tick.
+-- BRING MOBS
 -- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
 
@@ -397,6 +368,7 @@ local lockedMobs = {}
 
 local function alive(m)
     if not m or not m.Parent then return false end
+    if m.Parent ~= Workspace.Enemies then return false end
     local h = m:FindFirstChildOfClass("Humanoid")
     return h and h.Health > 0
 end
@@ -460,6 +432,7 @@ end
 
 function Spirit.BringMobsTo(targetMob)
     if not targetMob or not targetMob.Parent then return end
+    if targetMob.Parent ~= Workspace.Enemies then return end
     local targetHRP = targetMob:FindFirstChild("HumanoidRootPart")
     if not targetHRP then return end
 
@@ -501,7 +474,6 @@ function Spirit.BringEnemy()
         end
     end
 
-    -- Stack point: 3 studs below the player's HRP so mobs sit at feet level.
     local targetCFrame = root.CFrame - Vector3.new(0, 3, 0)
     local pulled = 0
     for _, v in ipairs(Workspace.Enemies:GetChildren()) do
