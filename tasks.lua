@@ -103,7 +103,7 @@ end
 Spirit.TasksOrder = {
     "Saber",
     "MeleesController",
-    "V2MeleeTask",              -- V2 melee flow, before bosses
+    "V2MeleeTask",
     "CollectDrops",
     "AutoEliteHunterTask",
     "AutoDoughKingTask",
@@ -203,7 +203,6 @@ local function runPirateRaidPriority()
     return true
 end
 
--- Nothing enabled, nothing running — stay put.
 local function allWorkDisabled()
     local cfg = Spirit.Config
     if not cfg then return false end
