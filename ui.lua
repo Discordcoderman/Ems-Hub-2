@@ -1,11 +1,11 @@
--- ui.lua — Bacon Hub reference layout, exact colours
+-- ui.lua — Bacon Hub reference layout
 --   · status + wait line + 5-stat strip
 --   · combat bar + mob row
---   · 4-button control row (job-id buttons removed)
+--   · 4-button control row
 --   · next-melee block with Beli requirement
 --   · 2-column inventory grid
 --   · bottom bar: Random Fruit (live cooldown), Bones, Unavailable, CD
---   · big E toggle, no idle hover, anti-lag
+--   · big E toggle, anti-lag, no idle hover
 local Spirit = getgenv().Spirit
 if not Spirit then error("[ui] core.lua not loaded") end
 
@@ -24,19 +24,33 @@ for _, container in ipairs({CoreGui, LocalPlayer:FindFirstChild("PlayerGui")}) d
     end
 end
 
-do
-    local hrp = LocalPlayer.Character
-        and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        local stale = hrp:FindFirstChild("EmsIdleHover")
-        if stale then stale:Destroy() end
+-- Scrub any lingering idle-hover from prior sessions
+local function scrubIdleHover(char)
+    if Spirit._idleBP then
+        pcall(function()
+            if Spirit._idleBP.Parent then Spirit._idleBP:Destroy() end
+        end)
+        Spirit._idleBP = nil
+    end
+    if char then
+        for _, obj in ipairs(char:GetDescendants()) do
+            local n = tostring(obj.Name or "")
+            if n == "EmsIdleHover" or n:find("^EmsIdle") then
+                pcall(function() obj:Destroy() end)
+            end
+        end
     end
 end
+
+scrubIdleHover(LocalPlayer.Character)
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    task.wait(0.2)
+    scrubIdleHover(newChar)
+end)
 
 local EmsUI = {Instances = {}, Config = {AntiLag = true}}
 Spirit.EmsUI = EmsUI
 
--- ── Palette — reference-exact ────────────────────────────────
 local C = {
     bg        = Color3.fromRGB(10, 10, 12),
     bgSoft    = Color3.fromRGB(18, 18, 22),
@@ -80,7 +94,6 @@ local function commaNum(n)
     if out:sub(1, 1) == "," then out = out:sub(2) end
     return out
 end
--- stat display: comma under 100k, then short K/M
 local function statNum(n)
     n = math.floor(tonumber(n) or 0)
     if n < 100000 then return commaNum(n) end
@@ -88,7 +101,6 @@ local function statNum(n)
     if n >= 1e6 then return string.format("%.1fM", n / 1e6) end
     return string.format("%dK", math.floor(n / 1e3))
 end
--- short display: always short (used for requirements)
 local function shortNum(n)
     n = math.floor(tonumber(n) or 0)
     if n >= 1e9 then return string.format("%.1fB", n / 1e9) end
@@ -97,7 +109,6 @@ local function shortNum(n)
     return tostring(n)
 end
 
--- ── Root ─────────────────────────────────────────────────────
 local gui = Instance.new("ScreenGui")
 gui.Name           = "EmsHubUI"
 gui.Parent         = CoreGui
@@ -106,9 +117,6 @@ gui.DisplayOrder   = 100
 gui.IgnoreGuiInset = true
 EmsUI.ScreenGui = gui
 
--- ═══════════════════════════════════════════════════════════════
--- BIG E TOGGLE
--- ═══════════════════════════════════════════════════════════════
 local eBtn = Instance.new("TextButton")
 eBtn.Name             = "EmsEButton"
 eBtn.Parent           = gui
@@ -136,9 +144,6 @@ eBtn.MouseLeave:Connect(function()
     eBtn.TextColor3 = C.brandHot
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- MAIN PANEL
--- ═══════════════════════════════════════════════════════════════
 local panel = Instance.new("Frame")
 panel.Name             = "Panel"
 panel.Parent           = gui
@@ -153,7 +158,6 @@ panel.Draggable        = true
 corner(panel, 4)
 EmsUI.Panel = panel
 
--- ── Status row ────────────────────────────────────────────────
 local statusDot = Instance.new("Frame")
 statusDot.Parent = panel
 statusDot.Position = UDim2.new(0, 16, 0, 16)
@@ -175,7 +179,6 @@ statusLbl.TextXAlignment = Enum.TextXAlignment.Left
 statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
 EmsUI.StatusLabel = statusLbl
 
--- ── Wait line ────────────────────────────────────────────────
 local waitLbl = Instance.new("TextLabel")
 waitLbl.Parent = panel
 waitLbl.BackgroundTransparency = 1
@@ -189,7 +192,6 @@ waitLbl.TextXAlignment = Enum.TextXAlignment.Center
 waitLbl.TextTruncate = Enum.TextTruncate.AtEnd
 EmsUI.WaitLabel = waitLbl
 
--- ── Stat strip (LV / FRAG / BELI / FPS / TIME) ───────────────
 local statsRow = Instance.new("Frame")
 statsRow.Parent = panel
 statsRow.Position = UDim2.new(0, 14, 0, 62)
@@ -230,7 +232,6 @@ for i, key in ipairs(statKeys) do
     statLabels[key] = v
 end
 
--- ── Combat header ────────────────────────────────────────────
 local combatHeader = Instance.new("TextLabel")
 combatHeader.Parent = panel
 combatHeader.BackgroundTransparency = 1
@@ -255,7 +256,6 @@ combatRight.TextColor3 = C.text
 combatRight.TextXAlignment = Enum.TextXAlignment.Right
 EmsUI.CombatText = combatRight
 
--- ── Combat bar ───────────────────────────────────────────────
 local combatWrap = Instance.new("Frame")
 combatWrap.Parent = panel
 combatWrap.Position = UDim2.new(0, 14, 0, 110)
@@ -273,7 +273,6 @@ combatFill.BorderSizePixel = 0
 corner(combatFill, 9)
 EmsUI.CombatFill = combatFill
 
--- ── Mob row ──────────────────────────────────────────────────
 local mobName = Instance.new("TextLabel")
 mobName.Parent = panel
 mobName.BackgroundTransparency = 1
@@ -299,7 +298,6 @@ mobHp.TextColor3 = C.textGrey
 mobHp.TextXAlignment = Enum.TextXAlignment.Right
 EmsUI.MobHp = mobHp
 
--- ── Button row — HIDE / 3D OFF / HOP / STOP ──────────────────
 local btnRow = Instance.new("Frame")
 btnRow.Parent = panel
 btnRow.Position = UDim2.new(0, 14, 0, 160)
@@ -322,12 +320,11 @@ local function makeBtn(x, w, text)
     return b
 end
 
-local hideBtn   = makeBtn(0,     0.25, "HIDE")
-local threeBtn  = makeBtn(0.25,  0.25, "")
-local hopBtn    = makeBtn(0.50,  0.25, "HOP")
-local stopBtn   = makeBtn(0.75,  0.25, "")
+local hideBtn  = makeBtn(0,    0.25, "HIDE")
+local threeBtn = makeBtn(0.25, 0.25, "")
+local hopBtn   = makeBtn(0.50, 0.25, "HOP")
+local stopBtn  = makeBtn(0.75, 0.25, "")
 
--- 3D OFF — "3D" red, "OFF" white
 local three3D = Instance.new("TextLabel")
 three3D.Parent = threeBtn
 three3D.BackgroundTransparency = 1
@@ -350,7 +347,6 @@ threeOff.TextSize = 12
 threeOff.TextColor3 = C.text
 threeOff.TextXAlignment = Enum.TextXAlignment.Left
 
--- STOP — "ST" white, "OP" red
 local stopSt = Instance.new("TextLabel")
 stopSt.Parent = stopBtn
 stopSt.BackgroundTransparency = 1
@@ -386,7 +382,6 @@ stopBtn.MouseButton1Click:Connect(function()
     pcall(function() Spirit.SetTask("MainTask", "Stopped") end)
 end)
 
--- ── NEXT MELEE ───────────────────────────────────────────────
 local nextMeleeHeader = Instance.new("TextLabel")
 nextMeleeHeader.Parent = panel
 nextMeleeHeader.BackgroundTransparency = 1
@@ -438,7 +433,6 @@ nmText.TextColor3 = C.text
 nmText.ZIndex = 2
 EmsUI.NextMeleeTxt = nmText
 
--- ── INVENTORY ────────────────────────────────────────────────
 local invHeader = Instance.new("TextLabel")
 invHeader.Parent = panel
 invHeader.BackgroundTransparency = 1
@@ -505,7 +499,6 @@ for i, name in ipairs(INV_RIGHT) do
     invLabels.right[name] = {dot = dot, lbl = lbl}
 end
 
--- ── Bottom bar ───────────────────────────────────────────────
 local fruitBtn = Instance.new("TextButton")
 fruitBtn.Parent = panel
 fruitBtn.Position = UDim2.new(0, 14, 0, 388)
@@ -556,14 +549,12 @@ cdLbl.TextColor3 = C.text
 cdLbl.TextXAlignment = Enum.TextXAlignment.Right
 EmsUI.CDLabel = cdLbl
 
--- ── Random Fruit toggle ─────────────────────────────────────
 fruitBtn.MouseButton1Click:Connect(function()
     local E = Spirit.Config and Spirit.Config.Extras
     if not E then return end
     E.AutoRandomFruit = not E.AutoRandomFruit
 end)
 
--- ── Panel visibility ────────────────────────────────────────
 local panelVisible = true
 local function setPanelVisible(v)
     panelVisible = v
@@ -571,9 +562,6 @@ local function setPanelVisible(v)
 end
 eBtn.MouseButton1Click:Connect(function() setPanelVisible(not panelVisible) end)
 
--- ═══════════════════════════════════════════════════════════════
--- MELEE HELPERS
--- ═══════════════════════════════════════════════════════════════
 local function currentTrainingMelee()
     local order = Spirit.MASTERY_TRAIN_ORDER or {}
     local owned = ScriptStorage.Melees or {}
@@ -596,9 +584,6 @@ local function nextUnboughtMelee()
     return nil
 end
 
--- ═══════════════════════════════════════════════════════════════
--- ANTI-LAG
--- ═══════════════════════════════════════════════════════════════
 local function stripInstance(obj)
     if not obj or not obj.Parent then return end
     if obj:IsA("BasePart") then
@@ -666,17 +651,6 @@ function EmsUI.EnableAntiLag()
 end
 pcall(EmsUI.EnableAntiLag)
 
--- ── Cleanup on respawn ─────────────────────────────────────
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.2)
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        local stale = hrp:FindFirstChild("EmsIdleHover")
-        if stale then stale:Destroy() end
-    end
-end)
-
--- ── SetText bridge ─────────────────────────────────────────
 function EmsUI.SetText(key, text)
     pcall(function()
         if not text then return end
@@ -696,7 +670,6 @@ function EmsUI.SetRedeemStatus(_) end
 function EmsUI.Toggle() setPanelVisible(not panelVisible) end
 function EmsUI.SetStats(_) end
 
--- ── FPS tracker ────────────────────────────────────────────
 local fps = 60
 local frameTimes = {}
 RunService.RenderStepped:Connect(function(dt)
@@ -707,9 +680,6 @@ RunService.RenderStepped:Connect(function(dt)
     if sum > 0 then fps = math.floor(#frameTimes / sum + 0.5) end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- MAIN REFRESH LOOP
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local start = os.time() - (Spirit.OldSessionTime or 0)
     while task.wait(0.5) do
@@ -732,7 +702,6 @@ task.spawn(function()
             statLabels.FPS.Text   = tostring(fps)
             statLabels.TIME.Text  = string.format("%dh %dm", eh, em)
 
-            -- ── Combat bar — current training melee ──
             local melee, mastery = currentTrainingMelee()
             if melee then
                 local target = melee.target
@@ -746,7 +715,6 @@ task.spawn(function()
                 combatHeader.Text = "Combat"
             end
 
-            -- ── Wait line — next melee to buy ──
             local nm = nextUnboughtMelee()
             if nm then
                 local price = Spirit.MeleePrices and Spirit.MeleePrices[nm.name]
@@ -779,9 +747,8 @@ task.spawn(function()
                 nmText.Text = "all owned"
             end
 
-            -- ── Mob row ──
             local mon = Spirit.MonResult
-            if mon and mon.Parent then
+            if mon and mon.Parent and mon.Parent == workspace.Enemies then
                 local hum = mon:FindFirstChild("Humanoid")
                 if hum then
                     mobName.Text = tostring(mon.Name)
@@ -794,7 +761,6 @@ task.spawn(function()
                 mobHp.Text = ""
             end
 
-            -- ── Inventory ──
             local bp = ScriptStorage.Backpack or {}
             local function own(name)
                 if name == "Elite" then return false end
@@ -821,7 +787,6 @@ task.spawn(function()
                 ref.lbl.TextColor3 = owned and C.text or C.textGrey
             end
 
-            -- ── Bottom bar ──
             local bones = (bp["Bones"] and bp["Bones"].Count) or 0
             bonesLbl.Text = string.format("Bones %d", bones)
 
@@ -831,7 +796,6 @@ task.spawn(function()
 
             cdLbl.Text = string.format("%d | CD --:--", bones)
 
-            -- ── Random Fruit button — real cooldown state ──
             local E = Spirit.Config and Spirit.Config.Extras
             if E then
                 if not E.AutoRandomFruit then
