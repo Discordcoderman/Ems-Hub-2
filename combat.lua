@@ -1,7 +1,7 @@
 -- combat.lua — CombatController, BringMobs, fast-attack
---   · Search only reads workspace.Enemies — no ReplicatedStorage fallback
---   · Attack rejects any target not parented to workspace.Enemies
---   · No-target branch returns idle, never tweens to a fallback
+--   · Search reads workspace.Enemies only
+--   · Attack rejects non-Enemies targets
+--   · No-target branch returns idle — never tweens to a fallback
 local Spirit = getgenv().Spirit
 if not Spirit then error("[combat] core.lua not loaded") end
 if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
@@ -140,9 +140,6 @@ local function Sort1(entity)
     return math.floor(Spirit.CaculateDistance(entity.HumanoidRootPart.CFrame))
 end
 
--- ═══════════════════════════════════════════════════════════════
--- Search — workspace.Enemies ONLY. No ReplicatedStorage fallback.
--- ═══════════════════════════════════════════════════════════════
 function CombatController.Search(names)
     local enemies = Workspace:FindFirstChild("Enemies")
     if not enemies then return nil end
@@ -254,9 +251,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 
         local MonResult = Spirit.MonResult
 
-        -- Reject anything not under workspace.Enemies. A ReplicatedStorage
-        -- template has a saved CFrame in the sky — following it to Y+35
-        -- is what sends the character to ~952m.
         if MonResult and MonResult.Parent ~= Workspace.Enemies then
             MonResult = nil
             Spirit.MonResult = nil
@@ -351,17 +345,11 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
             end
 
         elseif not forceNear then
-            -- No live target found. Return idle — do NOT tween anywhere.
-            -- Tweening to a fallback position is what moved the character
-            -- to a template spawn in the sky.
             return
         end
     end
 end
 
--- ═══════════════════════════════════════════════════════════════
--- BRING MOBS
--- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
 
 local lockedMobs = {}
