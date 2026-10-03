@@ -12,9 +12,6 @@ local ScriptStorage     = Spirit.ScriptStorage
 local SetTask           = Spirit.SetTask
 local SetText           = Spirit.SetText
 
--- ═══════════════════════════════════════════════════════════════
--- NOTIFICATION LISTENERS
--- ═══════════════════════════════════════════════════════════════
 local Notify = {Listeners = {}}
 Spirit.TorchEnabledTime = 0
 Spirit.DoneCdkTick      = 0
@@ -92,9 +89,6 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- FPS BOOST
--- ═══════════════════════════════════════════════════════════════
 local GRAYABLE = {
     BasePart = true, MeshPart = true, UnionOperation = true,
     Decal = true, Texture = true, ParticleEmitter = true,
@@ -136,17 +130,11 @@ if Spirit.Config and Spirit.Config.Configuration and Spirit.Config.Configuration
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- IDLE KICK PREVENTION
--- ═══════════════════════════════════════════════════════════════
 LocalPlayer.Idled:Connect(function()
     Services.VirtualUser:CaptureController()
     Services.VirtualUser:ClickButton2(Vector2.new())
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- STARTUP SIDE EFFECTS
--- ═══════════════════════════════════════════════════════════════
 SetTask("MainTask", "Level Farming")
 SetTask("SubTask", "Idle")
 
@@ -167,14 +155,7 @@ end)
 pcall(function() Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO REDEEM — ONE-SHOT
---
--- Two-layer skip:
---   · RedeemCompleted_v3 = true → whole block skipped on sight
---   · per-code table           → any code seen before is not re-fired
---
--- After the first successful pass, the master flag is set and the
--- block never enters again. Re-triggering only if the flag is wiped.
+-- AUTO REDEEM — one-shot
 -- ═══════════════════════════════════════════════════════════════
 local REDEEM_CODES = {
     "SUB2GAMERROBOT_RESET1", "KITT_RESET",
@@ -198,8 +179,6 @@ if not redeemDone then
 
     local levelBlocked = (ScriptStorage.PlayerData.Level or 0) >= Spirit.MaxLevel
 
-    -- Preflight — if every code is already marked, just flip the master
-    -- flag and skip without touching the remote at all.
     local allMarked = true
     for _, code in ipairs(REDEEM_CODES) do
         if not redeemed[code] then allMarked = false; break end
@@ -256,9 +235,6 @@ end
 
 SetText("MainTextLabel", "Loaded — waiting for player data...")
 
--- ═══════════════════════════════════════════════════════════════
--- IDLE TIMER WRITER
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -272,9 +248,6 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- MAIN LOOP
--- ═══════════════════════════════════════════════════════════════
 while task.wait() do
     pcall(Spirit.RefreshPlayerData)
 
