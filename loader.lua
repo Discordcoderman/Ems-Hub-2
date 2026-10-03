@@ -1,9 +1,15 @@
 -- loader.lua — EMS HUB boot entry
--- Usage: loadstring(game:HttpGet("https://raw.githubusercontent.com/Discordcoderman/Ems-Hub-2/main/loader.lua"))()
+-- Usage: loadstring(game:HttpGet("https://raw.githubusercontent.com/Discordcoderman/Ems-Hub-2/main/loader.lua?t=" .. tostring(os.time()) .. "&r=" .. tostring(math.random(1, 1e6))))()
 
 local BRANCH = "main"
 local BASE = ("https://raw.githubusercontent.com/Discordcoderman/Ems-Hub-2/%s/%%s"):format(BRANCH)
 local TEAM = "Pirates"
+
+-- Per-run cache-buster. Same value used for every module fetch this boot,
+-- unique per execution so the executor never serves a cached copy of any
+-- module from a previous session.
+local CACHE_BUST = "?t=" .. tostring(os.time())
+    .. "&r=" .. tostring(math.random(1, 1000000))
 
 local MODULES = {
     "core.lua",
@@ -20,7 +26,7 @@ local MODULES = {
     "swords.lua",
     "gacha.lua",
     "utility.lua",
-    "farming.lua",       -- elite hunter, dough king, materials, kill aura, chest, sword 600, auto boss
+    "farming.lua",
     "quest_sea2.lua",
     "quest_sea3.lua",
     "level_farm.lua",
@@ -43,7 +49,7 @@ task.spawn(function()
 end)
 
 local function load_module(path)
-    local url = BASE:format(path)
+    local url = BASE:format(path) .. CACHE_BUST
     local ok, src = pcall(game.HttpGet, game, url)
     if not ok or not src or src == "" then
         warn(("[EMS] fetch failed: %s"):format(path))
