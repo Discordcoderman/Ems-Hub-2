@@ -1,4 +1,7 @@
 -- farming.lua — standalone farming tasks
+--   · findMob searches ONLY workspace.Enemies — no ReplicatedStorage fallback
+--   · V2MeleeTask handles Awakened Ice Admiral → Library Key → teacher
+--   · AutoBossTask skips Tide Keeper + Awakened Ice Admiral
 local Spirit = getgenv().Spirit
 if not Spirit then error("[farming] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[farming] tasks.lua not loaded") end
@@ -18,31 +21,37 @@ end
 
 local function alive(model)
     if not model or not model.Parent then return false end
+    -- Reject anything not parented to workspace.Enemies
+    if model.Parent ~= workspace.Enemies then return false end
     local h = model:FindFirstChildOfClass("Humanoid")
     return h and h.Health > 0
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- findMob — workspace.Enemies ONLY. No ReplicatedStorage.
+-- Returning a template model is what sends the character to Y=952.
+-- ═══════════════════════════════════════════════════════════════
 local function findMob(names)
     local best, bestDist = nil, math.huge
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return nil end
-    local folders = {Workspace:FindFirstChild("Enemies"), Services.ReplicatedStorage}
-    for _, folder in ipairs(folders) do
-        if folder then
-            for _, e in ipairs(folder:GetChildren()) do
-                local match = false
-                if type(names) == "table" then
-                    match = table.find(names, e.Name) ~= nil
-                else
-                    match = e.Name == names
-                end
-                if match and alive(e) then
-                    local rp = e:FindFirstChild("HumanoidRootPart")
-                    if rp then
-                        local d = (rp.Position - hrp.Position).Magnitude
-                        if d < bestDist then best, bestDist = e, d end
-                    end
-                end
+
+    local enemies = Workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+
+    for _, e in ipairs(enemies:GetChildren()) do
+        local match = false
+        if type(names) == "table" then
+            match = table.find(names, e.Name) ~= nil
+        else
+            match = e.Name == names
+        end
+        if match then
+            local h = e:FindFirstChildOfClass("Humanoid")
+            local rp = e:FindFirstChild("HumanoidRootPart")
+            if h and rp and h.Health > 0 then
+                local d = (rp.Position - hrp.Position).Magnitude
+                if d < bestDist then best, bestDist = e, d end
             end
         end
     end
@@ -60,9 +69,6 @@ local function hopAfter(delay)
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- Boss skip set — never targeted by generic boss farms
--- ═══════════════════════════════════════════════════════════════
 local BOSS_SKIP = {
     ["Awakened Ice Admiral"] = true,
     ["Tide Keeper"]          = true,
@@ -383,7 +389,7 @@ SM:RegisterMethod("Start", function(swordName)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO BOSS — expanded BossesOrder, skips Tide Keeper + Ice Admiral
+-- AUTO BOSS — workspace.Enemies only, skips Ice Admiral + Tide Keeper
 -- ═══════════════════════════════════════════════════════════════
 local AB = Spirit.FunctionsHandler.AutoBossTask
 
@@ -393,12 +399,15 @@ AB:RegisterMethod("Refresh", function()
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return nil end
 
+    local enemies = Workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+
     local pick = nil
     for _, name in ipairs(Spirit.BossesOrder) do
         if not BOSS_SKIP[name] then
             local lvlReq = Spirit.BossesOrderLevel[name]
             if (not lvlReq) or lv >= lvlReq then
-                local live = ScriptStorage.Enemies[name]
+                local live = enemies:FindFirstChild(name)
                 if live and alive(live) then
                     local rp = live:FindFirstChild("HumanoidRootPart")
                     if rp and (rp.Position - hrp.Position).Magnitude <= 5000 then
@@ -419,10 +428,6 @@ end)
 
 -- ═══════════════════════════════════════════════════════════════
 -- V2 MELEE FLOW
---   Trigger: next melee in MASTERY_TRAIN_ORDER is a V2 melee that
---   isn't owned yet AND its V1 prerequisite is at 400+.
---   Flow:  correct sea → kill Awakened Ice Admiral → Library Key
---          → tween to teacher → hand in → buy.
 -- ═══════════════════════════════════════════════════════════════
 local V2 = Spirit.FunctionsHandler.V2MeleeTask
 
@@ -471,7 +476,6 @@ end)
 V2:RegisterMethod("Start", function(task)
     local name, spec = task.name, task.spec
 
-    -- Step 1: correct sea
     if Spirit.SeaIndex ~= spec.sea then
         SetTask("MainTask", "V2 Melee | Sailing to sea " .. spec.sea .. " for " .. name)
         if spec.sea == 2 then
@@ -482,10 +486,10 @@ V2:RegisterMethod("Start", function(task)
         return
     end
 
-    -- Step 2: kill Awakened Ice Admiral until Library Key lands
     if not hasLibraryKey() then
         SetTask("MainTask", "V2 Melee | Awakened Ice Admiral — Library Key")
-        local admiral = ScriptStorage.Enemies["Awakened Ice Admiral"]
+        local enemies = Workspace:FindFirstChild("Enemies")
+        local admiral = enemies and enemies:FindFirstChild("Awakened Ice Admiral")
         local admiralLive = admiral
             and admiral:FindFirstChild("Humanoid")
             and admiral.Humanoid.Health > 0
@@ -499,7 +503,6 @@ V2:RegisterMethod("Start", function(task)
         return
     end
 
-    -- Step 3: walk to teacher
     SetTask("MainTask", "V2 Melee | Deliver key to " .. spec.teacher)
     local teacher
     for _, folder in ipairs({
@@ -544,14 +547,9 @@ V2:RegisterMethod("Start", function(task)
         return
     end
 
-    -- Step 4: hand in
-    pcall(function()
-        Spirit.BuyMelee(spec.buyId, true)
-    end)
+    pcall(function() Spirit.BuyMelee(spec.buyId, true) end)
     task.wait(0.4)
-    pcall(function()
-        Spirit.BuyMelee(spec.buyId)
-    end)
+    pcall(function() Spirit.BuyMelee(spec.buyId) end)
     task.wait(0.4)
     Spirit.RefreshInventory()
 end)
