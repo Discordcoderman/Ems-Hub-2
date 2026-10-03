@@ -94,6 +94,7 @@ local TASKS_TO_REGISTER = {
     "SpecialBossesTask","CollectDrops","CollectBerries","UtillyItemsActivitation",
     "AutoEliteHunterTask", "AutoDoughKingTask", "AutoMaterialTask",
     "KillAuraTask", "AutoChestTask", "SwordMastery600Task", "AutoBossTask",
+    "V2MeleeTask",
 }
 for _, taskName in ipairs(TASKS_TO_REGISTER) do
     FunctionsHandler[taskName]:Register()
@@ -102,6 +103,7 @@ end
 Spirit.TasksOrder = {
     "Saber",
     "MeleesController",
+    "V2MeleeTask",              -- V2 melee flow, before bosses
     "CollectDrops",
     "AutoEliteHunterTask",
     "AutoDoughKingTask",
