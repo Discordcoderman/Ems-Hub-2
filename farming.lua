@@ -1,5 +1,5 @@
 -- farming.lua — standalone farming tasks
---   · findMob searches ONLY workspace.Enemies — no ReplicatedStorage fallback
+--   · findMob searches workspace.Enemies ONLY
 --   · V2MeleeTask handles Awakened Ice Admiral → Library Key → teacher
 --   · AutoBossTask skips Tide Keeper + Awakened Ice Admiral
 local Spirit = getgenv().Spirit
@@ -21,24 +21,17 @@ end
 
 local function alive(model)
     if not model or not model.Parent then return false end
-    -- Reject anything not parented to workspace.Enemies
-    if model.Parent ~= workspace.Enemies then return false end
+    if model.Parent ~= Workspace.Enemies then return false end
     local h = model:FindFirstChildOfClass("Humanoid")
     return h and h.Health > 0
 end
 
--- ═══════════════════════════════════════════════════════════════
--- findMob — workspace.Enemies ONLY. No ReplicatedStorage.
--- Returning a template model is what sends the character to Y=952.
--- ═══════════════════════════════════════════════════════════════
 local function findMob(names)
     local best, bestDist = nil, math.huge
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return nil end
-
     local enemies = Workspace:FindFirstChild("Enemies")
     if not enemies then return nil end
-
     for _, e in ipairs(enemies:GetChildren()) do
         local match = false
         if type(names) == "table" then
@@ -389,7 +382,7 @@ SM:RegisterMethod("Start", function(swordName)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO BOSS — workspace.Enemies only, skips Ice Admiral + Tide Keeper
+-- AUTO BOSS
 -- ═══════════════════════════════════════════════════════════════
 local AB = Spirit.FunctionsHandler.AutoBossTask
 
