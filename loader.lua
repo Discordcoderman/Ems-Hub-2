@@ -1,13 +1,8 @@
--- loader.lua — EMS HUB boot entry
--- Usage: loadstring(game:HttpGet("https://raw.githubusercontent.com/Discordcoderman/Ems-Hub-2/main/loader.lua?t=" .. tostring(os.time()) .. "&r=" .. tostring(math.random(1, 1e6))))()
-
+-- loader.lua — EMS HUB boot entry, per-module cache-bust
 local BRANCH = "main"
 local BASE = ("https://raw.githubusercontent.com/Discordcoderman/Ems-Hub-2/%s/%%s"):format(BRANCH)
 local TEAM = "Pirates"
 
--- Per-run cache-buster. Same value used for every module fetch this boot,
--- unique per execution so the executor never serves a cached copy of any
--- module from a previous session.
 local CACHE_BUST = "?t=" .. tostring(os.time())
     .. "&r=" .. tostring(math.random(1, 1000000))
 
