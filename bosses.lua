@@ -12,22 +12,16 @@ local Remotes           = Spirit.Remotes
 local SetTask           = Spirit.SetTask
 local CheckItem         = Spirit.CheckItem
 
--- ═══════════════════════════════════════════════════════════════
--- Boss skip set — Awakened Ice Admiral and Tide Keeper are only
--- killed by V2MeleeTask when a V2 melee needs the Library Key
--- ═══════════════════════════════════════════════════════════════
 local BOSS_SKIP = {
     ["Awakened Ice Admiral"] = true,
     ["Tide Keeper"]          = true,
 }
 
--- ═══════════════════════════════════════════════════════════════
--- BOSSES TASK
--- ═══════════════════════════════════════════════════════════════
 local function ConfirmBossDead(bossName)
     for _ = 1, 6 do
         task.wait(0.3)
-        local live = ScriptStorage.Enemies[bossName]
+        local enemies = workspace:FindFirstChild("Enemies")
+        local live = enemies and enemies:FindFirstChild(bossName)
         if live and live:FindFirstChild("Humanoid") and live.Humanoid.Health > 0 then
             return false
         end
@@ -51,6 +45,8 @@ end
 local BT = Spirit.FunctionsHandler.BossesTask
 
 BT:RegisterMethod("Refresh", function()
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
     local picked
     for _, name in ipairs(Spirit.BossesOrder) do
         if not BOSS_SKIP[name] then
@@ -58,7 +54,7 @@ BT:RegisterMethod("Refresh", function()
             if not cfgBoss or cfgBoss[name] ~= false then
                 local lvl = Spirit.BossesOrderLevel[name]
                 if lvl and (ScriptStorage.PlayerData.Level or 0) >= lvl then
-                    local live = ScriptStorage.Enemies[name]
+                    local live = enemies:FindFirstChild(name)
                     if live and live:FindFirstChild("Humanoid") and live.Humanoid.Health > 0 then
                         picked = live
                     end
@@ -87,17 +83,16 @@ BT:RegisterMethod("Start", function(boss)
     end)
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- SPECIAL BOSSES
--- ═══════════════════════════════════════════════════════════════
 local ST = Spirit.FunctionsHandler.SpecialBossesTask
 
 ST:RegisterMethod("Refresh", function()
+    local enemies = workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
     local picked
     for name, lvl in pairs(Spirit.SpecialBossesOrder) do
         local cfgBoss = Spirit.Config and Spirit.Config.BossWeapons
         if (not cfgBoss or cfgBoss[name] ~= false) and (ScriptStorage.PlayerData.Level or 0) >= lvl then
-            local live = ScriptStorage.Enemies[name]
+            local live = enemies:FindFirstChild(name)
             if live and live:FindFirstChild("Humanoid") and live.Humanoid.Health > 0 then
                 picked = live
             end
@@ -125,9 +120,6 @@ ST:RegisterMethod("Start", function(boss)
     end)
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- CAKE PRINCE
--- ═══════════════════════════════════════════════════════════════
 local CAKE_AREA_CF = CFrame.new(-2077, 252, -12373)
 local CAKE_BOSS_CF = CFrame.new(-2151.82, 149.32, -12404.91)
 local UNLOCK_MOBS  = {"Cookie Crafter", "Cake Guard", "Baking Staff", "Head Baker"}
@@ -218,9 +210,6 @@ CP:RegisterMethod("Start", function(trainingName)
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- RAID CONTROLLER
--- ═══════════════════════════════════════════════════════════════
 local RC = Spirit.FunctionsHandler.RaidController
 
 RC:RegisterMethod("RefreshRaidType", function()
@@ -355,9 +344,6 @@ RC:RegisterMethod("Start", function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO RAID ICE
--- ═══════════════════════════════════════════════════════════════
 local ARI = Spirit.FunctionsHandler.AutoRaidIce
 local ICE_CHIP_COOLDOWN = 2 * 60 * 60
 
