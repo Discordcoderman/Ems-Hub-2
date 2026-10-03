@@ -13,6 +13,15 @@ local SetTask           = Spirit.SetTask
 local CheckItem         = Spirit.CheckItem
 
 -- ═══════════════════════════════════════════════════════════════
+-- Boss skip set — Awakened Ice Admiral and Tide Keeper are only
+-- killed by V2MeleeTask when a V2 melee needs the Library Key
+-- ═══════════════════════════════════════════════════════════════
+local BOSS_SKIP = {
+    ["Awakened Ice Admiral"] = true,
+    ["Tide Keeper"]          = true,
+}
+
+-- ═══════════════════════════════════════════════════════════════
 -- BOSSES TASK
 -- ═══════════════════════════════════════════════════════════════
 local function ConfirmBossDead(bossName)
@@ -44,13 +53,15 @@ local BT = Spirit.FunctionsHandler.BossesTask
 BT:RegisterMethod("Refresh", function()
     local picked
     for _, name in ipairs(Spirit.BossesOrder) do
-        local cfgBoss = Spirit.Config and Spirit.Config.BossWeapons
-        if not cfgBoss or cfgBoss[name] ~= false then
-            local lvl = Spirit.BossesOrderLevel[name]
-            if lvl and (ScriptStorage.PlayerData.Level or 0) >= lvl then
-                local live = ScriptStorage.Enemies[name]
-                if live and live:FindFirstChild("Humanoid") and live.Humanoid.Health > 0 then
-                    picked = live
+        if not BOSS_SKIP[name] then
+            local cfgBoss = Spirit.Config and Spirit.Config.BossWeapons
+            if not cfgBoss or cfgBoss[name] ~= false then
+                local lvl = Spirit.BossesOrderLevel[name]
+                if lvl and (ScriptStorage.PlayerData.Level or 0) >= lvl then
+                    local live = ScriptStorage.Enemies[name]
+                    if live and live:FindFirstChild("Humanoid") and live.Humanoid.Health > 0 then
+                        picked = live
+                    end
                 end
             end
         end
@@ -93,7 +104,6 @@ ST:RegisterMethod("Refresh", function()
         end
     end
     if not picked then
-        -- Background bones top-up.
         pcall(function()
             local b = Spirit.Remotes.CommF_:InvokeServer("Bones", "Check")
             if b and b > 0 then
